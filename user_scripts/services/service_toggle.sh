@@ -132,7 +132,7 @@ draw_ui() {
             "$C_BOLD" "$idx)" "$C_RESET" \
             "$status_color" "$status_icon" "$C_RESET" \
             "$s_name" \
-            "$C_GRAY" "$s_desc" "$C_RESET"
+            "$C_GREEN" "$s_desc" "$C_RESET"
         
         # Use pre-increment to avoid potential 0-exit code issues with set -e
         ((++idx))
