@@ -10,7 +10,7 @@ set -euo pipefail
 
 readonly WALLPAPER="${HOME}/Pictures/wallpapers/dusk_default.jpg"
 readonly DAEMON_WAIT_CYCLES=20  # 2s total (20 × 0.1s)
-readonly WATCHDOG_CYCLES=60    # 6s total (60 × 0.1s)
+readonly WATCHDOG_CYCLES=190    # 6s total (60 × 0.1s)
 
 readonly -a SWWW_OPTS=(
     --transition-type grow
