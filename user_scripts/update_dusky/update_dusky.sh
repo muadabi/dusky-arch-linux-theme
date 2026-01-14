@@ -134,7 +134,7 @@ declare -ra UPDATE_SEQUENCE=(
 #    "U | 082_config_bat_notify.sh --default"
     "U | 083_set_thunar_terminal_kitty.sh"
     "U | 084_package_removal.sh --auto"
-    "U | 085_wayclick_reset"
+    "U | 085_wayclick_reset.sh"
 )
 
 # ==============================================================================
