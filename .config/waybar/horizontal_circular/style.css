@@ -18,6 +18,12 @@
 @define-color color5 @primary_container; /* Containers */
 @define-color color6 @on_primary;        /* Text on accents */
 
+/* --- MILD COLORS --- */
+@define-color primary-mild @primary_container;
+@define-color secondary-mild @secondary_container;
+@define-color tertiary-mild @tertiary_container;
+@define-color error-mild @error_container;
+
 * {
     border: none;
     border-radius: 0px;
@@ -35,25 +41,15 @@ window#waybar {
 
 tooltip {
     background: @surface_container;
-    border: 2px solid @primary;
-    border-radius: 16px;
-}
-
-tooltip label {
+    border: 2px solid @primary-mild;
     color: @on_surface;
-    padding: 8px 12px;
-    font-size: 13px;
 }
-
-/* ============================================================ */
-/* WORKSPACES                                                  */
-/* ============================================================ */
 #workspaces {
     background-color: @surface_container;
     padding: 5px 14px;
     margin: 0 6px;
     border-radius: 20px;
-    border: 2px solid @primary;
+    border: 2px solid @primary-mild;
     color: @on_surface;
 }
 
@@ -62,12 +58,12 @@ tooltip label {
     margin: 0px 3px;
     border-radius: 45px;
     color: transparent;
-    background-color: @primary;
+    background-color: @primary-mild;
     transition: all 0.3s ease-in-out;
 }
 
 #workspaces button.active {
-    background-color: @error;
+    background-color: @primary;
     color: @background;
     min-width: 40px;
     font-size: 12px;
@@ -107,7 +103,7 @@ tooltip label {
 #backlight {
     background-color: @surface_container;
     border-radius: 20px;
-    border: 2px solid @primary;
+    border: 2px solid @primary-mild;
     padding: 5px 14px;
     margin: 0 6px;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
