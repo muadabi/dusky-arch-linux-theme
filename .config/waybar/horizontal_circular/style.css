@@ -160,9 +160,9 @@ tooltip label {
     font-size: 17px;
     margin: 0 6px;
     padding: 5px 12px 5px 11px; 
-    color: @error;
+    color: @primary;
     border-radius: 60px; 
-    border: 2px solid @error; 
+    border: 2px solid @primary-mild; 
     background-color: @surface_container;
 }
 
@@ -170,9 +170,9 @@ tooltip label {
 #custom-logout:hover,
 #custom-reboot:hover,
 #custom-shutdown:hover {
-    background-color: @error;
-    color: @on_error;
-    border-color: @error;
+    background-color: @primary;
+    color: @background;
+    border-color: @primary;
 }
 
 /* ============================================================ */
