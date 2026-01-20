@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  DUSKY SMART RESTORE & STASH MANAGER (v2.4 - Golden Master)
+#  DUSKY SMART RESTORE & STASH MANAGER (v2.5 - Message Clarity Fix)
 #  Description: Intelligent interface for managing dotfile backups and stashes.
 #               Distinguishes between auto-updates, recovery snapshots, and
 #               manual edits. Safely restores states even with dirty work trees.
@@ -140,7 +140,12 @@ list_stashes() {
             label="MANUAL"
             color="${C_BLUE}"
             time_display="--"
-            clean_msg="Manual Save state / Work in Progress"
+            # FIX: Use the actual message we parsed, or fallback if empty
+            if [[ -n "${msg}" ]]; then
+                clean_msg="${msg}"
+            else
+                clean_msg="Manual Save state / Work in Progress"
+            fi
         else
             label="CUSTOM"
             color="${C_MAGENTA}"
