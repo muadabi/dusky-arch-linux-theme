@@ -599,7 +599,7 @@ pages:
           - title: "STT - Faster Whisper"
             description: "Speech-to-Text dictation"
             icon: "microphone-sensitivity-high-symbolic"
-            command: "$HOME/user_scripts/tts_stt/faster_whisper/faster_whisper_sst.sh"
+            command: "$HOME/user_scripts/tts_stt/faster_whisper/faster_whisper_stt.sh"
 
           - title: "OCR Selection"
             description: "Copy text from screen"
