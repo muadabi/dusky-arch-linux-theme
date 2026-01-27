@@ -60,8 +60,8 @@
 
     "battery": {
         // Vertical stacking required for 10px width
-        "format": "{icon}\n{capacity}", 
-        "format-charging": "\n{capacity}",
+        "format": " {icon}\n{capacity}\n{power:.0f}W",
+        "format-charging": " \n+{capacity}\n{power:.0f}W",
         "format-plugged": "\n{capacity}",
         "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
         "interval": 10,
