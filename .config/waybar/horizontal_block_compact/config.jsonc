@@ -20,8 +20,8 @@
     "custom/updates",
     "custom/notification",
     "custom/theme-toggle",
-    "custom/net-speed",
-  //  "tray"
+    "custom/net-speed"
+   // "tray"
   ],
 
   "modules-center": [
