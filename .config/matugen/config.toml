@@ -178,7 +178,7 @@ ln -nfs $HOME/.config/matugen/generated/btop-colors.theme $HOME/.config/btop/the
 notify-send -i applications-graphics-symbolic "Theme Updated"
 '''
 
-[templates.matugenfetch]
-input_path  = '~/.config/matugen/templates/matugenfetch'
-output_path = '~/.config/matugen/generated/matugenfetch'
-post_hook = '~/user_scripts/fastfetch/matugenfetch.sh'
+# [templates.matugenfetch]
+# input_path  = '~/.config/matugen/templates/matugenfetch'
+# output_path = '~/.config/matugen/generated/matugenfetch'
+# post_hook = '~/user_scripts/fastfetch/matugenfetch.sh'
