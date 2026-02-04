@@ -178,7 +178,7 @@ Gtk 4 Python
 >     - **Rule:** Ensure `on_destroy` handlers correctly clean up timers and threads to prevent "Zombie" background processes after a widget is closed.
 > 
 > 2. **Pythonic Modernization & Typing:**
->     - Scan for "Old Python" patterns. Enforce Python 3.13+ features (e.g., modern type union `|`, match/case if applicable).
+>     - Scan for "Old Python" patterns. Enforce Python 3.14+ features (e.g., modern type union `|`, match/case if applicable).
 >     - **Rule:** Enforce Strict Type Hinting (`from typing import ...`). No `Any` unless absolutely unavoidable.
 >     - **Rule:** Replace string path manipulation `os.path.join` with `pathlib.Path` syntax (`/`).
 >     - **Rule:** Check for bare `except:` clauses. All exceptions must be specific to prevent swallowing critical errors.
@@ -209,7 +209,7 @@ Gtk 4 Python
 > </output_format>
 > 
 > <input_script>
-> [PASTE YOUR PYTHON FILE CONTENT HERE]
+> 
 > </input_script>
 > ```
 
