@@ -1,0 +1,589 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   DUSKY CONTROL CENTER — GTK4/LIBADWAITA STYLESHEET
+   Fully theme-aware • Light/Dark/HC compatible • GNOME HIG compliant
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DESIGN TOKENS — Using Libadwaita System Colors
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color dusky_destructive @error_color;
+@define-color dusky_destructive_fg @error_fg_color;
+@define-color dusky_warning @warning_color;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SCROLLBAR — Minimal & Elegant
+   ───────────────────────────────────────────────────────────────────────────── */
+scrollbar {
+    background: transparent;
+}
+
+scrollbar slider {
+    background-color: alpha(@window_fg_color, 0.12);
+    border-radius: 99px;
+    min-width: 6px;
+    min-height: 6px;
+}
+
+scrollbar slider:hover {
+    background-color: alpha(@window_fg_color, 0.25);
+}
+
+scrollbar slider:active {
+    background-color: @accent_bg_color;
+}
+
+scrollbar:backdrop slider {
+    background-color: alpha(@window_fg_color, 0.08);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SIDEBAR — Navigation Panel
+   ───────────────────────────────────────────────────────────────────────────── */
+.sidebar-container {
+    background-color: alpha(@card_bg_color, 0.35);
+}
+
+.sidebar-container:backdrop {
+    background-color: alpha(@card_bg_color, 0.25);
+}
+
+.sidebar-header {
+    background: transparent;
+    border-bottom: 1px solid alpha(@borders, 0.2);
+    padding: 8px 0;
+}
+
+.sidebar-header-icon {
+    -gtk-icon-size: 20px;
+    color: @accent_color;
+}
+
+.sidebar-header:backdrop .sidebar-header-icon {
+    opacity: 0.6;
+}
+
+.sidebar-listbox {
+    background: transparent;
+    padding: 10px;
+}
+
+.sidebar-row {
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 3px;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: background-color 150ms ease-out,
+                border-color 150ms ease-out,
+                box-shadow 200ms ease-out;
+}
+
+.sidebar-row:hover:not(:selected) {
+    background-color: alpha(@accent_bg_color, 0.1);
+    border-color: alpha(@accent_bg_color, 0.2);
+}
+
+.sidebar-row:selected {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    box-shadow: 0 2px 6px alpha(@accent_bg_color, 0.3),
+                0 4px 12px alpha(@accent_bg_color, 0.15);
+    font-weight: 600;
+}
+
+.sidebar-row:selected:backdrop {
+    background-color: alpha(@accent_bg_color, 0.5);
+    box-shadow: none;
+}
+
+.sidebar-row:selected .sidebar-row-label,
+.sidebar-row:selected .sidebar-row-icon {
+    color: @accent_fg_color;
+}
+
+.sidebar-row-icon {
+    -gtk-icon-size: 18px;
+    min-width: 18px;
+    color: @accent_color;
+    margin-right: 10px;
+}
+
+.sidebar-row-label {
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SEARCH BAR — Pill-Shaped Entry
+   ───────────────────────────────────────────────────────────────────────────── */
+searchbar {
+    background: transparent;
+    padding: 8px 12px;
+}
+
+searchbar > revealer > box {
+    background: transparent;
+}
+
+searchbar entry {
+    border-radius: 99px;
+    padding: 8px 16px;
+    background-color: alpha(@card_bg_color, 0.55);
+    border: 1px solid alpha(@borders, 0.35);
+    transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+searchbar entry:focus {
+    border-color: @accent_color;
+    box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.2);
+}
+
+searchbar entry image {
+    color: alpha(@window_fg_color, 0.45);
+}
+
+searchbar entry:backdrop {
+    background-color: alpha(@card_bg_color, 0.35);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CONTENT AREA — Main Panel
+   ───────────────────────────────────────────────────────────────────────────── */
+.content-header {
+    background: transparent;
+}
+
+.content-title {
+    font-weight: 800;
+    font-size: 1.25rem;
+    letter-spacing: -0.02em;
+    opacity: 0.95;
+}
+
+.content-title:backdrop {
+    opacity: 0.65;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PREFERENCES GROUPS — Section Headers
+   ───────────────────────────────────────────────────────────────────────────── */
+preferencesgroup > box > label.title {
+    font-weight: 700;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    /* NOTE: text-transform not supported in GTK CSS */
+    color: alpha(@window_fg_color, 0.45);
+    margin-bottom: 10px;
+    margin-top: 14px;
+}
+
+preferencesgroup > box > label.title:first-child {
+    margin-top: 4px;
+}
+
+preferencespage clamp > box {
+    padding: 14px 18px 28px 18px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ACTION ROWS — Interactive List Items
+   ───────────────────────────────────────────────────────────────────────────── */
+row.action-row {
+    border-radius: 12px;
+    margin: 2px 0;
+    padding: 5px 10px;
+    background-color: alpha(@card_bg_color, 0.4);
+    border: 1px solid alpha(@borders, 0.35);
+    transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+row.action-row:hover {
+    background-color: alpha(@card_bg_color, 0.7);
+    border-color: alpha(@borders, 0.55);
+}
+
+row.action-row:active {
+    background-color: alpha(@card_bg_color, 0.85);
+}
+
+row.action-row:backdrop {
+    background-color: alpha(@card_bg_color, 0.25);
+    border-color: alpha(@borders, 0.2);
+}
+
+.action-row-prefix-icon {
+    -gtk-icon-size: 20px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 7px;
+    border-radius: 8px;
+    background: alpha(@accent_bg_color, 0.1);
+    color: @accent_color;
+}
+
+row.action-row:hover .action-row-prefix-icon {
+    background: alpha(@accent_bg_color, 0.18);
+}
+
+.action-row-prefix-icon:backdrop {
+    opacity: 0.6;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BUTTONS — Run Actions
+   ───────────────────────────────────────────────────────────────────────────── */
+.run-btn {
+    border-radius: 8px;
+    padding: 5px 16px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: background-color 150ms ease-out,
+                border-color 150ms ease-out,
+                box-shadow 150ms ease-out;
+}
+
+.run-btn:disabled {
+    opacity: 0.45;
+}
+
+.run-btn.default-action {
+    background-color: alpha(@window_fg_color, 0.07);
+    color: @window_fg_color;
+    border: 1px solid alpha(@borders, 0.35);
+}
+
+.run-btn.default-action:hover {
+    background-color: alpha(@window_fg_color, 0.12);
+    border-color: alpha(@borders, 0.55);
+}
+
+.run-btn.suggested-action {
+    background-color: alpha(@accent_bg_color, 0.12);
+    color: @accent_color;
+    border: 1px solid alpha(@accent_bg_color, 0.3);
+}
+
+.run-btn.suggested-action:hover {
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    box-shadow: 0 2px 6px alpha(@accent_bg_color, 0.25);
+}
+
+.run-btn.destructive-action {
+    background-color: alpha(@error_color, 0.1);
+    color: @error_color;
+    border: 1px solid alpha(@error_color, 0.25);
+}
+
+.run-btn.destructive-action:hover {
+    background-color: @error_bg_color;
+    color: @error_fg_color;
+    box-shadow: 0 2px 6px alpha(@error_bg_color, 0.3);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SWITCH TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+switch {
+    border-radius: 99px;
+}
+
+switch:checked {
+    background-color: @accent_bg_color;
+}
+
+switch:checked:backdrop {
+    background-color: alpha(@accent_bg_color, 0.55);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SCALE SLIDER — Smooth Track
+   ───────────────────────────────────────────────────────────────────────────── */
+scale {
+    padding: 8px 0;
+}
+
+scale trough {
+    border-radius: 99px;
+    background-color: alpha(@window_fg_color, 0.08);
+    min-height: 6px;
+}
+
+scale highlight {
+    border-radius: 99px;
+    background-color: @accent_bg_color;
+    min-height: 6px;
+}
+
+scale slider {
+    background-color: @window_bg_color;
+    border: 1px solid alpha(@borders, 0.3);
+    border-radius: 99px;
+    min-width: 18px;
+    min-height: 18px;
+    box-shadow: 0 1px 2px alpha(@window_fg_color, 0.12),
+                0 2px 4px alpha(@window_fg_color, 0.08);
+}
+
+scale slider:hover {
+    box-shadow: 0 2px 4px alpha(@window_fg_color, 0.15),
+                0 4px 8px alpha(@window_fg_color, 0.1);
+}
+
+scale:backdrop highlight {
+    background-color: alpha(@accent_bg_color, 0.5);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   HERO CARDS — Compact Grid
+   ───────────────────────────────────────────────────────────────────────────── */
+.hero-card {
+    background-color: alpha(@card_bg_color, 0.45);
+    border: 1px solid alpha(@borders, 0.35);
+    border-radius: 14px;
+    padding: 14px 10px;
+    min-width: 90px;
+    min-height: 80px;
+    transition: background-color 180ms ease-out,
+                border-color 180ms ease-out,
+                box-shadow 180ms ease-out;
+}
+
+.hero-card:hover {
+    background-color: alpha(@card_bg_color, 0.8);
+    border-color: alpha(@accent_color, 0.35);
+    box-shadow: 0 3px 10px alpha(@window_fg_color, 0.06),
+                0 6px 18px alpha(@window_fg_color, 0.04);
+}
+
+.hero-card:active {
+    background-color: alpha(@card_bg_color, 0.95);
+    box-shadow: 0 1px 4px alpha(@window_fg_color, 0.06);
+}
+
+.hero-card:backdrop {
+    background-color: alpha(@card_bg_color, 0.3);
+    border-color: alpha(@borders, 0.2);
+}
+
+.hero-icon {
+    color: @accent_color;
+    -gtk-icon-size: 24px;
+    margin-bottom: 8px;
+}
+
+.hero-icon:backdrop {
+    opacity: 0.55;
+}
+
+.hero-title {
+    font-weight: 700;
+    font-size: 0.8rem;
+    color: @window_fg_color;
+}
+
+.hero-subtitle {
+    font-weight: 500;
+    font-size: 0.72rem;
+    color: alpha(@window_fg_color, 0.55);
+    margin-top: 3px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   HERO CARD VARIANTS
+   ───────────────────────────────────────────────────────────────────────────── */
+.hero-card.suggested-card {
+    border-color: alpha(@accent_bg_color, 0.3);
+    background-color: alpha(@accent_bg_color, 0.07);
+}
+
+.hero-card.suggested-card:hover {
+    background-color: alpha(@accent_bg_color, 0.14);
+    border-color: alpha(@accent_bg_color, 0.45);
+}
+
+.hero-card.destructive-card {
+    border-color: alpha(@error_color, 0.25);
+    background-color: alpha(@error_color, 0.05);
+}
+
+.hero-card.destructive-card .hero-icon {
+    color: @error_color;
+}
+
+.hero-card.destructive-card:hover {
+    background-color: alpha(@error_color, 0.1);
+    border-color: alpha(@error_color, 0.4);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOGGLE CARDS
+   ───────────────────────────────────────────────────────────────────────────── */
+.hero-card.toggle-active {
+    background-color: @accent_bg_color;
+    border-color: @accent_bg_color;
+    box-shadow: 0 3px 12px alpha(@accent_bg_color, 0.3),
+                0 1px 4px alpha(@accent_bg_color, 0.2);
+}
+
+.hero-card.toggle-active .hero-title,
+.hero-card.toggle-active .hero-icon,
+.hero-card.toggle-active .hero-subtitle {
+    color: @accent_fg_color;
+}
+
+.hero-card.toggle-active:hover {
+    background-color: shade(@accent_bg_color, 1.05);
+    box-shadow: 0 4px 16px alpha(@accent_bg_color, 0.35),
+                0 2px 6px alpha(@accent_bg_color, 0.2);
+}
+
+.hero-card.toggle-active:backdrop {
+    background-color: alpha(@accent_bg_color, 0.55);
+    box-shadow: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   WARNING BANNER
+   ───────────────────────────────────────────────────────────────────────────── */
+.warning-banner-box {
+    background-color: alpha(@warning_color, 0.08);
+    border: 1px solid alpha(@warning_color, 0.3);
+    border-radius: 14px;
+    padding: 20px 18px;
+    margin: 6px 0;
+}
+
+.warning-banner-box:backdrop {
+    background-color: alpha(@warning_color, 0.04);
+    border-color: alpha(@warning_color, 0.15);
+}
+
+.warning-banner-icon {
+    -gtk-icon-size: 44px;
+    color: @warning_color;
+    opacity: 0.85;
+}
+
+.warning-banner-box .title-1 {
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: @window_fg_color;
+    margin-top: 6px;
+}
+
+.warning-banner-box .body {
+    font-size: 0.88rem;
+    color: alpha(@window_fg_color, 0.75);
+    margin-top: 3px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   EMPTY STATE
+   ───────────────────────────────────────────────────────────────────────────── */
+.empty-state-box {
+    padding: 44px 20px;
+    opacity: 0.85;
+}
+
+.empty-state-box:backdrop {
+    opacity: 0.55;
+}
+
+.empty-state-icon {
+    -gtk-icon-size: 64px;
+    color: alpha(@window_fg_color, 0.25);
+    margin-bottom: 14px;
+}
+
+.empty-state-title {
+    font-weight: 700;
+    font-size: 1.2rem;
+    color: alpha(@window_fg_color, 0.75);
+    margin-bottom: 6px;
+}
+
+.empty-state-subtitle {
+    font-size: 0.92rem;
+    color: alpha(@window_fg_color, 0.45);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOAST NOTIFICATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+toast {
+    background-color: mix(@card_bg_color, @window_fg_color, 0.08);
+    border: 1px solid alpha(@borders, 0.25);
+    border-radius: 10px;
+    padding: 10px 16px;
+    box-shadow: 0 4px 12px alpha(@window_fg_color, 0.12),
+                0 8px 28px alpha(@window_fg_color, 0.08);
+    font-weight: 500;
+}
+
+toast button {
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DIM LABEL
+   ───────────────────────────────────────────────────────────────────────────── */
+.dim-label {
+    color: alpha(@window_fg_color, 0.4);
+    font-style: italic;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   FLOWBOX
+   ───────────────────────────────────────────────────────────────────────────── */
+flowbox {
+    padding: 4px 0;
+}
+
+flowboxchild {
+    padding: 4px;
+    border-radius: 14px;
+}
+
+flowboxchild:selected {
+    background: transparent;
+    outline: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LINKED BUTTONS
+   ───────────────────────────────────────────────────────────────────────────── */
+.linked > button {
+    border-radius: 0;
+}
+
+.linked > button:first-child {
+    border-top-left-radius: 8px;
+    border-bottom-left-radius: 8px;
+}
+
+.linked > button:last-child {
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
+
+.linked > button:only-child {
+    border-radius: 8px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   UTILITY CLASSES
+   ───────────────────────────────────────────────────────────────────────────── */
+.rounded-full {
+    border-radius: 99px;
+}
+
+.card-elevated {
+    box-shadow: 0 2px 8px alpha(@window_fg_color, 0.08),
+                0 4px 16px alpha(@window_fg_color, 0.04);
+}
+
+.subtle-border {
+    border: 1px solid alpha(@borders, 0.25);
+}
