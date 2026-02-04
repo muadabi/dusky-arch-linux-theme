@@ -85,8 +85,7 @@ def _perform_redirect(
         if isinstance(page, dict) and page.get("id") == page_id:
             if row := sidebar.get_row_at_index(idx):
                 sidebar.select_row(row)
-            if content_title_label:
-                content_title_label.set_label(page.get("title", ""))
+            # Title update handled by page header now
             return
 
 
@@ -285,13 +284,15 @@ class BaseActionRow(DynamicIconMixin, Adw.ActionRow):
 
         self.properties = properties
         self.on_action = on_action or {}
-        ctx = context or {}
+        self.context = context or {}
 
-        self.stack: Adw.ViewStack | None = ctx.get("stack")
-        self.content_title_label: Gtk.Label | None = ctx.get("content_title_label")
-        self.config: dict[str, Any] = ctx.get("config", {})
-        self.sidebar: Gtk.ListBox | None = ctx.get("sidebar")
-        self.toast_overlay: Adw.ToastOverlay | None = ctx.get("toast_overlay")
+        self.stack: Adw.ViewStack | None = self.context.get("stack")
+        # content_title_label removed as it is no longer used
+        self.config: dict[str, Any] = self.context.get("config", {})
+        self.sidebar: Gtk.ListBox | None = self.context.get("sidebar")
+        self.toast_overlay: Adw.ToastOverlay | None = self.context.get("toast_overlay")
+        self.nav_view: Adw.NavigationView | None = self.context.get("nav_view")
+        self.builder_func = self.context.get("builder_func")
 
         self.update_source_id: int | None = None
         self._is_destroyed = False
@@ -393,7 +394,7 @@ class ButtonRow(BaseActionRow):
                 self.on_action.get("page"),
                 self.config,
                 self.sidebar,
-                self.content_title_label,
+                None # Content label removed
             )
 
 
@@ -658,6 +659,36 @@ class SliderRow(BaseActionRow):
                     final_cmd, "Slider", self.on_action.get("terminal", False)
                 )
 
+class NavigationRow(BaseActionRow):
+    """A row that navigates to a subpage."""
+
+    def __init__(
+        self,
+        properties: dict[str, Any],
+        layout_data: list[dict[str, Any]] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(properties, None, context)
+        
+        self.layout_data = layout_data or []
+        self.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        self.set_activatable(True)
+        self.connect("activated", self._on_activated)
+
+    def _on_activated(self, row: Adw.ActionRow) -> None:
+        """Handle row activation (click)."""
+        if not self.nav_view or not self.builder_func:
+            log.warning("NavigationRow: Missing nav_view or builder_func in context.")
+            return
+
+        title = str(self.properties.get("title", "Subpage"))
+        
+        # Build the new subpage using the passed builder function
+        subpage = self.builder_func(title, self.layout_data, self.context)
+        
+        # Push to stack
+        self.nav_view.push(subpage)
+
 
 # =============================================================================
 # GRID CARD BASE CLASS
@@ -774,7 +805,7 @@ class GridCard(DynamicIconMixin, GridCardBase):
                 self.on_action.get("page"),
                 self.context.get("config", {}),
                 self.context.get("sidebar"),
-                self.context.get("content_title_label"),
+                None # Content label removed
             )
 
 

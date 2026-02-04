@@ -91,7 +91,6 @@ class DuskyControlCenter(Adw.Application):
         "config",
         "sidebar_list",
         "stack",
-        "content_title_label",
         "toast_overlay",
         "search_bar",
         "search_entry",
@@ -108,12 +107,11 @@ class DuskyControlCenter(Adw.Application):
         self.config: dict[str, Any] = {}
         self.sidebar_list: Gtk.ListBox | None = None
         self.stack: Adw.ViewStack | None = None
-        self.content_title_label: Gtk.Label | None = None
         self.toast_overlay: Adw.ToastOverlay | None = None
         self.search_bar: Gtk.SearchBar | None = None
         self.search_entry: Gtk.SearchEntry | None = None
         self.search_btn: Gtk.ToggleButton | None = None
-        self.search_page: Adw.PreferencesPage | None = None
+        self.search_page: Adw.NavigationPage | None = None
         self.search_results_group: Adw.PreferencesGroup | None = None
         self.last_visible_page: str | None = None
         self.search_debounce_source: int | None = None
@@ -181,14 +179,19 @@ class DuskyControlCenter(Adw.Application):
                 display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
 
-    def _get_context(self) -> dict[str, Any]:
+    def _get_context(
+        self,
+        nav_view: Adw.NavigationView | None = None,
+        builder_func: Callable | None = None,
+    ) -> dict[str, Any]:
         """Build the shared context dictionary for row widgets."""
         return {
             "stack": self.stack,
-            "content_title_label": self.content_title_label,
             "config": self.config,
             "sidebar": self.sidebar_list,
             "toast_overlay": self.toast_overlay,
+            "nav_view": nav_view,
+            "builder_func": builder_func,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -268,16 +271,13 @@ class DuskyControlCenter(Adw.Application):
 
         old_config = self.config
         try:
-            # Reload Config
             new_config = utility.load_config(SCRIPT_DIR / CONFIG_FILENAME)
             if not isinstance(new_config, dict):
                 raise ValueError("Configuration must be a dictionary")
             
-            # Reload CSS (Force read from disk)
             self._load_css(force_reload=True)
             self._apply_css()
 
-            # Apply
             self.config = new_config
             self._validate_config()
             self._clear_ui()
@@ -305,9 +305,18 @@ class DuskyControlCenter(Adw.Application):
     # ─────────────────────────────────────────────────────────────────────────
     def _create_search_page(self) -> None:
         """Create the search results page."""
-        self.search_page = Adw.PreferencesPage()
+        self.search_page = Adw.NavigationPage(title="Search", tag="search")
+        
+        toolbar_view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        toolbar_view.add_top_bar(header)
+        
+        pref_page = Adw.PreferencesPage()
         self.search_results_group = Adw.PreferencesGroup(title="Search Results")
-        self.search_page.add(self.search_results_group)
+        pref_page.add(self.search_results_group)
+        
+        toolbar_view.set_content(pref_page)
+        self.search_page.set_child(toolbar_view)
 
         if self.stack:
             self.stack.add_named(self.search_page, SEARCH_PAGE_ID)
@@ -326,24 +335,6 @@ class DuskyControlCenter(Adw.Application):
 
         if self.last_visible_page and self.stack:
             self.stack.set_visible_child_name(self.last_visible_page)
-            if self.content_title_label:
-                title = self._get_page_title_by_id(self.last_visible_page)
-                self.content_title_label.set_label(title)
-
-    def _get_page_title_by_id(self, page_id: str) -> str:
-        """Resolve page ID to its display title."""
-        if not page_id.startswith(PAGE_PREFIX):
-            return DEFAULT_TITLE
-
-        try:
-            index = int(page_id[len(PAGE_PREFIX):])
-            page = self.config.get("pages", [])[index]
-            if isinstance(page, dict):
-                return str(page.get("title", DEFAULT_TITLE))
-        except (ValueError, IndexError, TypeError):
-            pass
-
-        return DEFAULT_TITLE
 
     def _on_search_changed(self, entry: Gtk.SearchEntry) -> None:
         """Debounced handler for search input changes."""
@@ -369,9 +360,6 @@ class DuskyControlCenter(Adw.Application):
             self.last_visible_page = current
 
         self.stack.set_visible_child_name(SEARCH_PAGE_ID)
-        if self.content_title_label:
-            self.content_title_label.set_label("Search")
-
         self._reset_search_results(f"Results for '{query}'")
         self._populate_search_results(query)
         return GLib.SOURCE_REMOVE
@@ -379,9 +367,13 @@ class DuskyControlCenter(Adw.Application):
     def _reset_search_results(self, title: str) -> None:
         """Clear and recreate the search results group."""
         if self.search_page and self.search_results_group:
-            self.search_page.remove(self.search_results_group)
-            self.search_results_group = Adw.PreferencesGroup(title=title)
-            self.search_page.add(self.search_results_group)
+            toolbar = self.search_page.get_child()
+            if isinstance(toolbar, Adw.ToolbarView):
+                pref_page = toolbar.get_content()
+                if isinstance(pref_page, Adw.PreferencesPage):
+                    pref_page.remove(self.search_results_group)
+                    self.search_results_group = Adw.PreferencesGroup(title=title)
+                    pref_page.add(self.search_results_group)
 
     def _populate_search_results(self, query: str) -> None:
         """Search all items and populate results."""
@@ -390,7 +382,7 @@ class DuskyControlCenter(Adw.Application):
 
         found_count = 0
         for match in self._iter_matching_items(query):
-            self.search_results_group.add(self._build_item_row(match))
+            self.search_results_group.add(self._build_item_row(match, self._get_context()))
             found_count += 1
 
         if found_count == 0:
@@ -405,31 +397,47 @@ class DuskyControlCenter(Adw.Application):
                 continue
 
             page_title = str(page.get("title", "Unknown"))
+            yield from self._recursive_search(page.get("layout", []), query, page_title)
 
-            for section in page.get("layout", []):
-                if not isinstance(section, dict):
+    def _recursive_search(
+        self, layout_data: list[dict[str, Any]], query: str, context_str: str
+    ) -> Iterator[dict[str, Any]]:
+        """Recursively search layout and nested layouts for matching items."""
+        for section in layout_data:
+            if not isinstance(section, dict):
+                continue
+
+            for item in section.get("items", []):
+                if not isinstance(item, dict):
                     continue
 
-                for item in section.get("items", []):
-                    if not isinstance(item, dict):
-                        continue
+                props = item.get("properties", {})
+                if not isinstance(props, dict):
+                    continue
 
-                    props = item.get("properties")
-                    if not isinstance(props, dict):
-                        continue
+                item_type = item.get("type")
+                title = str(props.get("title", ""))
+                desc = str(props.get("description", ""))
 
-                    title = str(props.get("title", "")).lower()
-                    desc = str(props.get("description", "")).lower()
-
-                    if query in title or query in desc:
+                # Check if current item matches
+                # We exclude 'navigation' rows from results because clicking them
+                # in a search list (without the nav stack) is broken/confusing.
+                # We only want to find the leaf nodes (actions/toggles).
+                if item_type != "navigation":
+                    if query in title.lower() or query in desc.lower():
                         result = deepcopy(item)
-                        original_desc = props.get("description", "")
                         result["properties"]["description"] = (
-                            f"{page_title} • {original_desc}"
-                            if original_desc
-                            else page_title
+                            f"{context_str} • {desc}" if desc else context_str
                         )
                         yield result
+
+                # Recursive dive: if item has a layout (e.g. navigation row), scan it
+                if "layout" in item:
+                    sub_title = str(props.get("title", ""))
+                    new_context = f"{context_str} > {sub_title}"
+                    yield from self._recursive_search(
+                        item.get("layout", []), query, new_context
+                    )
 
     # ─────────────────────────────────────────────────────────────────────────
     # SIDEBAR CONSTRUCTION
@@ -505,26 +513,12 @@ class DuskyControlCenter(Adw.Application):
         pages = self.config.get("pages", [])
 
         if 0 <= index < len(pages):
-            page = pages[index]
             self.stack.set_visible_child_name(f"{PAGE_PREFIX}{index}")
-            if self.content_title_label and isinstance(page, dict):
-                self.content_title_label.set_label(str(page.get("title", "")))
 
-    def _create_content_panel(self) -> Adw.ToolbarView:
-        """Build the main content panel."""
-        view = Adw.ToolbarView()
-
-        header = Adw.HeaderBar()
-        header.add_css_class("content-header")
-        self.content_title_label = Gtk.Label(label="Welcome")
-        self.content_title_label.add_css_class("content-title")
-        header.set_title_widget(self.content_title_label)
-        view.add_top_bar(header)
-
+    def _create_content_panel(self) -> Adw.ViewStack:
+        """Build the main content panel (Stack Only)."""
         self.stack = Adw.ViewStack(vexpand=True, hexpand=True)
-        view.set_content(self.stack)
-
-        return view
+        return self.stack
 
     # ─────────────────────────────────────────────────────────────────────────
     # PAGE POPULATION
@@ -551,9 +545,17 @@ class DuskyControlCenter(Adw.Application):
             if self.sidebar_list:
                 self.sidebar_list.append(row)
 
-            pref_page = self._build_pref_page(page_data)
+            nav_view = Adw.NavigationView()
+            context = self._get_context(
+                nav_view=nav_view,
+                builder_func=self._build_nav_page
+            )
+
+            root_page = self._build_nav_page(title, page_data.get("layout", []), context)
+            nav_view.add(root_page)
+
             if self.stack:
-                self.stack.add_named(pref_page, f"{PAGE_PREFIX}{idx}")
+                self.stack.add_named(nav_view, f"{PAGE_PREFIX}{idx}")
 
             if first_valid_row is None:
                 first_valid_row = row
@@ -561,12 +563,35 @@ class DuskyControlCenter(Adw.Application):
         if first_valid_row and self.sidebar_list:
             self.sidebar_list.select_row(first_valid_row)
 
-    def _build_pref_page(self, page_data: dict[str, Any]) -> Adw.PreferencesPage:
-        """Build a preferences page from config data."""
-        page = Adw.PreferencesPage()
-        context = self._get_context()
+    def _build_nav_page(
+        self, 
+        title: str, 
+        layout_data: list[dict[str, Any]], 
+        context: dict[str, Any]
+    ) -> Adw.NavigationPage:
+        """Build a NavigationPage containing a ToolbarView(Header+PreferencesPage)."""
+        nav_page = Adw.NavigationPage(title=title, tag=title.lower().replace(" ", "-"))
+        
+        toolbar_view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        toolbar_view.add_top_bar(header)
+        
+        pref_page = Adw.PreferencesPage()
+        self._populate_pref_page_content(pref_page, layout_data, context)
+        
+        toolbar_view.set_content(pref_page)
+        nav_page.set_child(toolbar_view)
+        
+        return nav_page
 
-        for section_data in page_data.get("layout", []):
+    def _populate_pref_page_content(
+        self, 
+        page: Adw.PreferencesPage, 
+        layout_data: list[dict[str, Any]], 
+        context: dict[str, Any]
+    ) -> None:
+        """Fill a PreferencesPage with groups based on layout data."""
+        for section_data in layout_data:
             if not isinstance(section_data, dict):
                 continue
 
@@ -580,8 +605,6 @@ class DuskyControlCenter(Adw.Application):
                 group = Adw.PreferencesGroup()
                 group.add(self._build_item_row(section_data, context))
                 page.add(group)
-
-        return page
 
     def _build_grid_section(
         self, section_data: dict[str, Any], context: dict[str, Any]
@@ -654,6 +677,7 @@ class DuskyControlCenter(Adw.Application):
             "toggle": lambda: rows.ToggleRow(properties, item.get("on_toggle"), context),
             "label": lambda: rows.LabelRow(properties, item.get("value"), context),
             "slider": lambda: rows.SliderRow(properties, item.get("on_change"), context),
+            "navigation": lambda: rows.NavigationRow(properties, item.get("layout"), context),
             "warning_banner": lambda: self._build_warning_banner(properties),
         }
 
