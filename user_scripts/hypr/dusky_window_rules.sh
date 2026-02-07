@@ -2,7 +2,7 @@
 # ==============================================================================
 # Purpose: Interactive TUI to generate, copy, and append Hyprland window rules.
 #          * Engine: Absolute Cursor Positioning (Perfect borders).
-#          * Features: Full Templates, Dual Move Options, Opacity Explainer.
+#          * Core: Ported from Dusky TUI Template v2.8.2 (Refined).
 # ==============================================================================
 
 set -euo pipefail
@@ -11,13 +11,14 @@ export LC_NUMERIC=C
 # --- Configuration ---
 readonly TARGET_FILE="${HOME}/.config/hypr/edit_here/source/window_rules.conf"
 readonly APP_TITLE="Dusky Window Rule Generator"
-readonly APP_VERSION="v4.0"
+readonly APP_VERSION="v4.3"
 
 # Dimensions
 declare -ri BOX_WIDTH=100
 declare -ri MAX_DISPLAY_ROWS=10
 declare -ri PREVIEW_HEIGHT=14
 declare -ri HEADER_HEIGHT=3
+declare -ri ITEM_PADDING=32
 
 # --- ANSI Colors & Controls ---
 readonly ESC=$'\033'
@@ -40,10 +41,15 @@ readonly CURSOR_HOME=$'\033[H'
 readonly CURSOR_HIDE=$'\033[?25l'
 readonly CURSOR_SHOW=$'\033[?25h'
 readonly CLR_EOL=$'\033[K'
+readonly CLR_EOS=$'\033[J'
+readonly CLR_SCREEN=$'\033[2J'
 readonly MOUSE_ON=$'\033[?1000h\033[?1002h\033[?1006h'
 readonly MOUSE_OFF=$'\033[?1000l\033[?1002l\033[?1006l'
 
-# Pre-compute border line once (optimization: no loop on every draw)
+# Timeout for reading escape sequences
+readonly ESC_READ_TIMEOUT=0.02
+
+# Pre-compute border line once
 declare BORDER_LINE=""
 printf -v BORDER_LINE '%*s' "$((BOX_WIDTH - 2))" ""
 BORDER_LINE="${BORDER_LINE// /─}"
@@ -57,16 +63,22 @@ declare -i SELECTED_ROW=0
 declare -i SCROLL_OFFSET=0
 declare -i ITEM_COUNT=0
 declare STATUS_MSG=""
+declare ORIGINAL_STTY=""
 
 # --- Helpers ---
 
 cleanup() {
     printf '%s%s%s%s' "$MOUSE_OFF" "$ALT_SCREEN_OFF" "$CURSOR_SHOW" "$C_RESET"
-    stty echo 2>/dev/null || :
+    
+    # Robustly restore original stty settings
+    if [[ -n "${ORIGINAL_STTY:-}" ]]; then
+        stty "$ORIGINAL_STTY" 2>/dev/null || :
+    else
+        stty echo 2>/dev/null || :
+    fi
 }
 trap cleanup EXIT INT TERM
 
-# Strip ANSI codes to get clean text (for file output/clipboard)
 strip_ansi() {
     printf '%s' "$1" | sed "s/${ESC}\[[0-9;]*[a-zA-Z]//g"
 }
@@ -81,7 +93,6 @@ escape_regex() {
 
 sanitize_name() {
     local input="$1"
-    # Pure bash: remove all non-alphanumeric/underscore/hyphen characters
     local output="${input//[^[:alnum:]_-]/}"
     printf '%s' "${output:-unnamed}"
 }
@@ -121,7 +132,7 @@ scan_windows() {
     local title initialClass mon_id w_w w_h w_x w_y w_float w_mapped
     local m_off_x m_off_y
     local r_w r_h r_x r_y local_x local_y
-    local safe_class safe_name rule_block
+    local safe_class safe_title safe_name rule_block
 
     while IFS=$'\t' read -r title initialClass mon_id w_w w_h w_x w_y w_float w_mapped; do
         [[ -z $initialClass ]] && continue
@@ -131,7 +142,7 @@ scan_windows() {
         read -r m_w m_h m_off_x m_off_y <<< "${MON_MAP["$mon_id"]}"
         [[ ! $m_w =~ ^[1-9][0-9]*$ ]] && continue
 
-        # Calculations (awk required for floating-point math)
+        # Calculations
         read -r r_w r_h r_x r_y local_x local_y < <(
             awk -v ww="$w_w" -v wh="$w_h" -v wx="$w_x" -v wy="$w_y" \
                 -v mw="$m_w" -v mh="$m_h" -v mx="$m_off_x" -v my="$m_off_y" \
@@ -142,6 +153,7 @@ scan_windows() {
         )
 
         safe_class=$(escape_regex "$initialClass")
+        safe_title=$(escape_regex "$title")
         safe_name=$(sanitize_name "$initialClass")
 
         # Build Block
@@ -151,14 +163,18 @@ scan_windows() {
         rule_block+="${C_GREEN}windowrule {${C_RESET}"$'\n'
         rule_block+="    name = ${safe_name}"$'\n'
         rule_block+="    match:class = ^(${safe_class})$"$'\n'
+        rule_block+="    ${C_COMMENT}# match:title = ^(${safe_title})$${C_RESET}"$'\n'
+        
         rule_block+="    float = on"$'\n'
-        rule_block+="    size = (monitor_w * ${r_w}) (monitor_h * ${r_h})"$'\n'
-        rule_block+="    ${C_COMMENT}# size = ${w_w} ${w_h}${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}# pin = on${C_RESET}"$'\n'
 
+        rule_block+="    size = ${w_w} ${w_h}"$'\n'
+        rule_block+="    ${C_COMMENT}# size = (monitor_w * ${r_w}) (monitor_h * ${r_h})${C_RESET}"$'\n'
+
+        rule_block+="    move = ${local_x} ${local_y}"$'\n'
         rule_block+="    ${C_COMMENT}# move = (monitor_w * ${r_x}) (monitor_h * ${r_y})${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# move = ${local_x} ${local_y}${C_RESET}"$'\n'
-
-        rule_block+="    center = on"$'\n'
+        rule_block+="    ${C_COMMENT}# move = (monitor_w-window_w-20) (monitor_h-window_h-20)${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}# center = on${C_RESET}"$'\n'
 
         rule_block+=$'\n'"    ${C_COMMENT}# --- Visuals & Effects ---${C_RESET}"$'\n'
         rule_block+="    ${C_COMMENT}# opacity [active] [inactive]${C_RESET}"$'\n'
@@ -168,12 +184,13 @@ scan_windows() {
         rule_block+="    ${C_COMMENT}# border_color = rgb(ff0000)${C_RESET}"$'\n'
         rule_block+="    ${C_COMMENT}# no_blur = on${C_RESET}"$'\n'
         rule_block+="    ${C_COMMENT}# no_shadow = on${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}# no_dim = on${C_RESET}"$'\n'
+        rule_block+="    ${C_COMMENT}# opaque = on${C_RESET}"$'\n'
         rule_block+="    ${C_COMMENT}# dim_around = on${C_RESET}"$'\n'
 
         rule_block+=$'\n'"    ${C_COMMENT}# --- Placement ---${C_RESET}"$'\n'
         rule_block+="    ${C_COMMENT}# workspace = 2${C_RESET}"$'\n'
         rule_block+="    ${C_COMMENT}# monitor = DP-1${C_RESET}"$'\n'
-        rule_block+="    ${C_COMMENT}# pin = on${C_RESET}"$'\n'
 
         rule_block+="${C_GREEN}}${C_RESET}"$'\n'
 
@@ -196,7 +213,6 @@ draw_ui() {
     local buf=""
     local -i i visible_start visible_end
 
-    # --- TOP BORDER ---
     buf+="${CURSOR_HOME}${C_MAGENTA}┌${BORDER_LINE}┐${C_RESET}"$'\n'
 
     # --- HEADER ---
@@ -207,11 +223,27 @@ draw_ui() {
     printf -v padding '%*s' "$pad_len" ""
 
     buf+="${C_MAGENTA}│ ${title_str}${padding}${ESC}[${BOX_WIDTH}G│${C_RESET}"$'\n'
-
-    # --- SEPARATOR ---
     buf+="${C_MAGENTA}├${BORDER_LINE}┤${C_RESET}"$'\n'
 
     # --- SCROLL LOGIC ---
+    if (( ITEM_COUNT == 0 )); then
+        SELECTED_ROW=0
+        SCROLL_OFFSET=0
+    else
+        (( SELECTED_ROW < 0 )) && SELECTED_ROW=0
+        (( SELECTED_ROW >= ITEM_COUNT )) && SELECTED_ROW=$(( ITEM_COUNT - 1 ))
+
+        if (( SELECTED_ROW < SCROLL_OFFSET )); then
+            SCROLL_OFFSET=$SELECTED_ROW
+        elif (( SELECTED_ROW >= SCROLL_OFFSET + MAX_DISPLAY_ROWS )); then
+            SCROLL_OFFSET=$(( SELECTED_ROW - MAX_DISPLAY_ROWS + 1 ))
+        fi
+        
+        local -i max_scroll=$(( ITEM_COUNT - MAX_DISPLAY_ROWS ))
+        (( max_scroll < 0 )) && max_scroll=0
+        (( SCROLL_OFFSET > max_scroll )) && SCROLL_OFFSET=$max_scroll
+    fi
+
     visible_start=$SCROLL_OFFSET
     visible_end=$(( SCROLL_OFFSET + MAX_DISPLAY_ROWS ))
     ((visible_end > ITEM_COUNT)) && visible_end=$ITEM_COUNT
@@ -228,19 +260,16 @@ draw_ui() {
             line_content="   ${C_CYAN}${class} ${C_GREY}:: ${C_WHITE}${title}${C_RESET}"
         fi
 
-        buf+="${C_MAGENTA}│ ${line_content}${ESC}[${BOX_WIDTH}G│${C_RESET}"$'\n'
+        buf+="${C_MAGENTA}│ ${line_content}${C_RESET}${CLR_EOL}${ESC}[${BOX_WIDTH}G${C_MAGENTA}│${C_RESET}"$'\n'
     done
 
     # --- EMPTY ROWS ---
     for ((i = visible_end; i < visible_start + MAX_DISPLAY_ROWS; i++)); do
-        buf+="${C_MAGENTA}│ ${ESC}[${BOX_WIDTH}G│${C_RESET}"$'\n'
+        buf+="${C_MAGENTA}│ ${CLR_EOL}${ESC}[${BOX_WIDTH}G│${C_RESET}"$'\n'
     done
 
-    # --- SEPARATOR ---
     buf+="${C_MAGENTA}├${BORDER_LINE}┤${C_RESET}"$'\n'
-
-    # --- PREVIEW HEADER ---
-    buf+="${C_MAGENTA}│ ${C_WHITE}PREVIEW:${C_RESET}${ESC}[${BOX_WIDTH}G│${C_RESET}"$'\n'
+    buf+="${C_MAGENTA}│ ${C_WHITE}PREVIEW:${C_RESET}${CLR_EOL}${ESC}[${BOX_WIDTH}G${C_MAGENTA}│${C_RESET}"$'\n'
 
     # --- PREVIEW CONTENT ---
     local preview_content="${GENERATED_RULES[$SELECTED_ROW]}"
@@ -255,28 +284,106 @@ draw_ui() {
             if ((${#clean_line} > BOX_WIDTH - 4)); then
                 line="${line:0:$((BOX_WIDTH - 6))}.."
             fi
-
-            buf+="${C_MAGENTA}│ ${line}${ESC}[${BOX_WIDTH}G│${C_RESET}"$'\n'
+            buf+="${C_MAGENTA}│ ${line}${C_RESET}${CLR_EOL}${ESC}[${BOX_WIDTH}G${C_MAGENTA}│${C_RESET}"$'\n'
         fi
     done <<< "$preview_content"
 
     # --- EMPTY PREVIEW ROWS ---
     for ((i = line_count; i < PREVIEW_HEIGHT; i++)); do
-        buf+="${C_MAGENTA}│ ${ESC}[${BOX_WIDTH}G│${C_RESET}"$'\n'
+        buf+="${C_MAGENTA}│ ${CLR_EOL}${ESC}[${BOX_WIDTH}G│${C_RESET}"$'\n'
     done
 
-    # --- BOTTOM BORDER ---
     buf+="${C_MAGENTA}└${BORDER_LINE}┘${C_RESET}"$'\n'
+    buf+="${C_CYAN} [↑/↓] Select  [Enter] Append  [c] Copy  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
 
-    # --- FOOTER ---
-    buf+="${C_CYAN} [↑/↓] Select  [Enter] Append  [c] Copy  [q] Quit${C_RESET}"$'\n'
     if [[ -n $STATUS_MSG ]]; then
         buf+="${C_YELLOW} ${STATUS_MSG}${C_RESET}${CLR_EOL}"$'\n'
     else
         buf+="${C_CYAN} Target: ${C_WHITE}${TARGET_FILE}${C_RESET}${CLR_EOL}"$'\n'
     fi
 
+    # Append CLR_EOS to ensure a clean screen below the UI
+    buf+="${CLR_EOS}"
+
     printf '%s' "$buf"
+}
+
+# --- Input Handling & Navigation ---
+
+navigate() {
+    local -i dir=$1
+    (( ITEM_COUNT == 0 )) && return 0
+    (( SELECTED_ROW += dir )) || :
+
+    # Wrap selection
+    (( SELECTED_ROW < 0 )) && SELECTED_ROW=$(( ITEM_COUNT - 1 ))
+    (( SELECTED_ROW >= ITEM_COUNT )) && SELECTED_ROW=0
+    return 0
+}
+
+navigate_page() {
+    local -i dir=$1
+    (( ITEM_COUNT == 0 )) && return 0
+    (( SELECTED_ROW += dir * MAX_DISPLAY_ROWS )) || :
+
+    # Clamp without wrapping
+    (( SELECTED_ROW < 0 )) && SELECTED_ROW=0
+    (( SELECTED_ROW >= ITEM_COUNT )) && SELECTED_ROW=$(( ITEM_COUNT - 1 ))
+    return 0
+}
+
+navigate_end() {
+    local -i target=$1  # 0 = top, 1 = bottom
+    (( ITEM_COUNT == 0 )) && return 0
+
+    if (( target == 0 )); then
+        SELECTED_ROW=0
+    else
+        SELECTED_ROW=$(( ITEM_COUNT - 1 ))
+    fi
+    return 0
+}
+
+handle_mouse() {
+    local input=$1
+    local -i button x y
+    local type
+
+    # STRICT SGR regex from template
+    local regex='^\[<([0-9]+);([0-9]+);([0-9]+)([Mm])$'
+
+    if [[ $input =~ $regex ]]; then
+        button=${BASH_REMATCH[1]}
+        x=${BASH_REMATCH[2]}
+        y=${BASH_REMATCH[3]}
+        type=${BASH_REMATCH[4]}
+
+        # Scroll wheel (64=up, 65=down)
+        if (( button == 64 )); then
+            navigate -1
+            return 0
+        elif (( button == 65 )); then
+            navigate 1
+            return 0
+        fi
+
+        # Only handle Button Press ('M') for clicks
+        [[ $type != "M" ]] && return 0
+
+        # Left Click (0)
+        if (( button == 0 )); then
+            local -i list_start_y=$((HEADER_HEIGHT + 1))
+            local -i list_end_y=$((list_start_y + MAX_DISPLAY_ROWS - 1))
+
+            if (( y >= list_start_y && y <= list_end_y)); then
+                local -i clicked_idx=$((y - list_start_y + SCROLL_OFFSET))
+                if ((clicked_idx >= 0 && clicked_idx < ITEM_COUNT)); then
+                    SELECTED_ROW=$clicked_idx
+                fi
+            fi
+        fi
+    fi
+    return 0
 }
 
 get_clean_rule() {
@@ -303,7 +410,6 @@ append_selection() {
         return
     fi
 
-    # Ensure newline at EOF before appending
     if [[ -s $TARGET_FILE ]]; then
         local last_char
         last_char=$(tail -c 1 "$TARGET_FILE")
@@ -318,13 +424,20 @@ append_selection() {
 
 # --- Main ---
 main() {
+    # 0. Bash Version Check
+    if (( BASH_VERSINFO[0] < 4 )); then
+        printf '%s[FATAL]%s Bash 4.0+ required\n' "$C_RED" "$C_RESET" >&2
+        exit 1
+    fi
+
     scan_windows
 
-    stty -echo
+    # 1. Save Terminal State
+    ORIGINAL_STTY=$(stty -g 2>/dev/null) || ORIGINAL_STTY=""
+
     printf '%s%s%s%s' "$ALT_SCREEN_ON" "$MOUSE_ON" "$CURSOR_HIDE" "$CURSOR_HOME"
 
     local key seq char
-    local -i btn y
 
     while true; do
         draw_ui
@@ -334,53 +447,31 @@ main() {
 
         if [[ $key == $'\x1b' ]]; then
             seq=""
-            while IFS= read -rsn1 -t 0.02 char; do seq+="$char"; done
+            while IFS= read -rsn1 -t "$ESC_READ_TIMEOUT" char; do
+                seq+="$char"
+            done
             case $seq in
-                '[A'|'OA') ((SELECTED_ROW--)) || : ;;
-                '[B'|'OB') ((SELECTED_ROW++)) || : ;;
-                '['*'<'*)
-                    if [[ $seq =~ ^\[\<([0-9]+)\;[0-9]+\;([0-9]+)[Mm] ]]; then
-                        btn=${BASH_REMATCH[1]}
-                        y=${BASH_REMATCH[2]}
-
-                        # Scroll Wheel
-                        ((btn == 64)) && { ((SELECTED_ROW--)) || :; }
-                        ((btn == 65)) && { ((SELECTED_ROW++)) || :; }
-
-                        # Left Click (btn 0)
-                        if ((btn == 0)); then
-                            local -i list_start_y=$((HEADER_HEIGHT + 1))
-                            local -i list_end_y=$((list_start_y + MAX_DISPLAY_ROWS - 1))
-
-                            if ((y >= list_start_y && y <= list_end_y)); then
-                                local -i clicked_idx=$((y - list_start_y + SCROLL_OFFSET))
-                                if ((clicked_idx >= 0 && clicked_idx < ITEM_COUNT)); then
-                                    SELECTED_ROW=$clicked_idx
-                                fi
-                            fi
-                        fi
-                    fi
-                    ;;
+                '[A'|'OA')     navigate -1 ;;       # Arrow Up
+                '[B'|'OB')     navigate 1 ;;        # Arrow Down
+                '[5~')         navigate_page -1 ;;  # Page Up
+                '[6~')         navigate_page 1 ;;   # Page Down
+                '[H'|'[1~')    navigate_end 0 ;;    # Home
+                '[F'|'[4~')    navigate_end 1 ;;    # End
+                # Mouse handling using loose glob
+                '['*'<'*)      handle_mouse "$seq" ;;
             esac
         else
             case $key in
-                k|K) ((SELECTED_ROW--)) || : ;;
-                j|J) ((SELECTED_ROW++)) || : ;;
-                q|Q) break ;;
-                c|C) copy_clipboard ;;
-                '') append_selection ;;
+                k|K)           navigate -1 ;;
+                j|J)           navigate 1 ;;
+                g)             navigate_end 0 ;;
+                G)             navigate_end 1 ;;
+                q|Q|$'\x03')   break ;;
+                c|C)           copy_clipboard ;;
+                '')            append_selection ;;
             esac
-        fi
-
-        ((SELECTED_ROW < 0)) && SELECTED_ROW=0
-        ((SELECTED_ROW >= ITEM_COUNT)) && SELECTED_ROW=$((ITEM_COUNT - 1))
-
-        if ((SELECTED_ROW < SCROLL_OFFSET)); then
-            SCROLL_OFFSET=$SELECTED_ROW
-        elif ((SELECTED_ROW >= SCROLL_OFFSET + MAX_DISPLAY_ROWS)); then
-            SCROLL_OFFSET=$((SELECTED_ROW - MAX_DISPLAY_ROWS + 1))
         fi
     done
 }
 
-main
+main "$@"
