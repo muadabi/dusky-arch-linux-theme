@@ -1,23 +1,21 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky TUI Engine - Master Template v3.1.0 (Audited & Hardened)
+# Dusky TUI Engine - Master Template v3.2.0 (Stable & Hardened)
 # -----------------------------------------------------------------------------
 # Target: Arch Linux / Hyprland / UWSM / Wayland
 # Requires: Bash 5.0+, GNU sed, GNU awk
 #
-# v3.1.0 CHANGELOG (Audit Refactor):
-#   - SECURITY: Tightened Bash version gate to 5.0+.
-#   - PERF: Batched multi-line sed edits into single invocation.
-#   - PERF: Computed ITEM_START_ROW from render structure (no magic numbers).
-#   - FIX: Eliminated trailing whitespace injection in sed replacements.
-#   - FIX: Hardened escape_sed_{pattern,replacement} with full BRE coverage.
-#   - CLEANUP: Tab array provisioning matches actual TAB_COUNT.
+# v3.2.0 CHANGELOG:
+#   - SAFETY: Reverted broken block-parsing logic suggested by audit.
+#   - SAFETY: Retained whitespace separation for inline comments.
+#   - FIX: Batched sed writes for atomicity (prevents partial updates).
+#   - FIX: Manual mouse sequence parsing (robust against regex edge cases).
+#   - FIX: Scoped LC_NUMERIC to prevent global environment pollution.
+#   - FIX: Hardened escape_sed_pattern for BRE special characters ({, }).
+#   - FIX: Added strict TTY validation before startup.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
-
-# Force standard C locale for numeric operations (prevents comma/decimal bugs).
-export LC_NUMERIC=C
 
 # =============================================================================
 # ▼ USER CONFIGURATION (EDIT THIS SECTION) ▼
@@ -25,7 +23,7 @@ export LC_NUMERIC=C
 
 readonly CONFIG_FILE="${HOME}/.config/hypr/change_me.conf"
 readonly APP_TITLE="Dusky Template"
-readonly APP_VERSION="v3.1.0"
+readonly APP_VERSION="v3.2.0"
 
 # Dimensions & Layout
 declare -ri MAX_DISPLAY_ROWS=14
@@ -33,7 +31,7 @@ declare -ri BOX_INNER_WIDTH=76
 declare -ri ADJUST_THRESHOLD=40
 declare -ri ITEM_PADDING=32
 
-readonly -a TABS=("General" "Input" "Display" "Misc")
+declare -ra TABS=("General" "Input" "Display" "Misc")
 
 # Item Registration
 # Syntax: register <tab_idx> "Label" "config_str" "DEFAULT_VALUE"
@@ -104,7 +102,6 @@ declare -i SCROLL_OFFSET=0
 declare -ri TAB_COUNT=${#TABS[@]}
 declare -a TAB_ZONES=()
 declare ORIGINAL_STTY=""
-declare _ESCAPE_SEQ=""
 
 # --- Data Structures ---
 declare -A ITEM_MAP=()
@@ -113,8 +110,9 @@ declare -A CONFIG_CACHE=()
 declare -A DEFAULTS=()
 
 # Provision tab containers dynamically based on actual TAB_COUNT
+# Using -ga to ensure they are visible globally
 for (( _ti = 0; _ti < TAB_COUNT; _ti++ )); do
-    declare -a "TAB_ITEMS_${_ti}=()"
+    declare -ga "TAB_ITEMS_${_ti}=()"
 done
 unset _ti
 
@@ -153,7 +151,7 @@ escape_sed_replacement() {
 escape_sed_pattern() {
     local _esc=$1
     local -n _out=$2
-    # Escape all BRE metacharacters and the delimiter |
+    # Escape all BRE metacharacters, the delimiter |, and braces
     _esc=${_esc//\\/\\\\}
     _esc=${_esc//|/\\|}
     _esc=${_esc//./\\.}
@@ -162,6 +160,8 @@ escape_sed_pattern() {
     _esc=${_esc//\]/\\]}
     _esc=${_esc//^/\\^}
     _esc=${_esc//\$/\\\$}
+    _esc=${_esc//\{/\\{}
+    _esc=${_esc//\}/\\}}
     _out=$_esc
 }
 
@@ -198,11 +198,13 @@ populate_config_cache() {
         [[ -z "${key_part:-}" ]] && continue
         CONFIG_CACHE["$key_part"]=$value_part
 
+        # Use parameter expansion to strip key suffix
         key_name=${key_part%%|*}
-        if [[ -z "${CONFIG_CACHE["${key_name}|"]:-}" ]]; then
+        # Use +set check to handle empty-string values correctly
+        if [[ -z "${CONFIG_CACHE["${key_name}|"]+set}" ]]; then
             CONFIG_CACHE["${key_name}|"]=$value_part
         fi
-    done < <(awk '
+    done < <(LC_NUMERIC=C awk '
         BEGIN { depth = 0 }
         /^[[:space:]]*#/ { next }
         {
@@ -225,6 +227,8 @@ populate_config_cache() {
                     val = substr(line, eq_pos + 1)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+                    # Strip trailing brace if present (handles "key = val }")
+                    gsub(/[[:space:]]*\}[[:space:]]*$/, "", val)
                     if (key != "") {
                         current_block = (depth > 0) ? block_stack[depth] : ""
                         print key "|" current_block "=" val
@@ -241,7 +245,7 @@ populate_config_cache() {
 find_key_line_in_block() {
     local block_name=$1 key_name=$2 file=$3
 
-    awk -v target_block="$block_name" -v target_key="$key_name" '
+    LC_NUMERIC=C awk -v target_block="$block_name" -v target_key="$key_name" '
     BEGIN { depth = 0; in_target = 0; target_depth = 0 }
     {
         clean = $0; sub(/#.*/, "", clean)
@@ -282,17 +286,21 @@ write_value_to_file() {
     escape_sed_replacement "$new_val" safe_val
     escape_sed_pattern "$key" safe_sed_key
 
+    # NOTE: We intentionally keep a trailing space (\1${safe_val} ) 
+    # to prevent merging values with inline comments (e.g., key=val#comment).
+    local sed_repl="\\1${safe_val} "
+
     if [[ -n "$block" ]]; then
         local target_output
         target_output=$(find_key_line_in_block "$block" "$key" "$CONFIG_FILE")
         [[ -z "$target_output" ]] && return 1
 
-        # Build a single sed script for all matching lines (Atomic batch)
+        # Build a single sed script for all matching lines (atomic batch)
         local sed_script="" target_line
         while IFS= read -r target_line; do
             [[ ! "$target_line" =~ ^[0-9]+$ ]] && continue
             (( target_line == 0 )) && continue
-            sed_script+="${target_line}s|^\\([[:space:]]*${safe_sed_key}[[:space:]]*=[[:space:]]*\\)[^#]*|\\1${safe_val} |;"
+            sed_script+="${target_line}s|^\\([[:space:]]*${safe_sed_key}[[:space:]]*=[[:space:]]*\\)[^#]*|${sed_repl}|;"
         done <<< "$target_output"
 
         if [[ -n "$sed_script" ]]; then
@@ -300,12 +308,14 @@ write_value_to_file() {
         fi
     else
         sed --follow-symlinks -i \
-            "s|^\\([[:space:]]*${safe_sed_key}[[:space:]]*=[[:space:]]*\\)[^#]*|\\1${safe_val} |" \
+            "s|^\\([[:space:]]*${safe_sed_key}[[:space:]]*=[[:space:]]*\\)[^#]*|${sed_repl}|" \
             "$CONFIG_FILE"
     fi
 
     CONFIG_CACHE["${key}|${block}"]=$new_val
-    [[ -z "$block" ]] && CONFIG_CACHE["${key}|"]=$new_val
+    if [[ -z "$block" ]]; then
+        CONFIG_CACHE["${key}|"]=$new_val
+    fi
     return 0
 }
 
@@ -353,7 +363,7 @@ modify_value() {
             ;;
         float)
             if [[ ! "$current" =~ ^-?[0-9]*\.?[0-9]+$ ]]; then current=${min:-0.0}; fi
-            new_val=$(awk -v c="$current" -v dir="$direction" -v s="${step:-0.1}" \
+            new_val=$(LC_NUMERIC=C awk -v c="$current" -v dir="$direction" -v s="${step:-0.1}" \
                           -v mn="$min" -v mx="$max" 'BEGIN {
                 val = c + (dir * s)
                 if (mn != "" && val < mn) val = mn
@@ -506,7 +516,6 @@ draw_ui() {
             true)              display="${C_GREEN}ON${C_RESET}" ;;
             false)             display="${C_RED}OFF${C_RESET}" ;;
             "$UNSET_MARKER")   display="${C_YELLOW}⚠ UNSET${C_RESET}" ;;
-            *'$'*)             display="${C_MAGENTA}Dynamic${C_RESET}" ;;
             *)                 display="${C_WHITE}${val}${C_RESET}" ;;
         esac
 
@@ -604,20 +613,33 @@ handle_mouse() {
     local -i button x y i start end
     local type zone
 
-    local regex='^\[<([0-9]+);([0-9]+);([0-9]+)([Mm])$'
-    if ! [[ "$input" =~ $regex ]]; then return 0; fi
+    # SGR mouse: input is like [<0;45;3M or [<64;10;5m
+    # Strip the leading [< to parse the numeric fields
+    local body=${input#'[<'}
+    [[ "$body" == "$input" ]] && return 0  # No [< prefix found
 
-    button=${BASH_REMATCH[1]}
-    x=${BASH_REMATCH[2]}
-    y=${BASH_REMATCH[3]}
-    type=${BASH_REMATCH[4]}
+    local terminator=${body: -1}
+    [[ "$terminator" != "M" && "$terminator" != "m" ]] && return 0
+
+    body=${body%[Mm]}
+    local field1 field2 field3
+    IFS=';' read -r field1 field2 field3 <<< "$body"
+
+    # Validate all fields are numeric
+    [[ ! "$field1" =~ ^[0-9]+$ ]] && return 0
+    [[ ! "$field2" =~ ^[0-9]+$ ]] && return 0
+    [[ ! "$field3" =~ ^[0-9]+$ ]] && return 0
+
+    button=$field1
+    x=$field2
+    y=$field3
 
     # Scroll wheel
     if (( button == 64 )); then navigate -1; return 0; fi
     if (( button == 65 )); then navigate 1; return 0; fi
 
-    # Only process press events
-    [[ "$type" != "M" ]] && return 0
+    # Only process press events (M = press, m = release)
+    [[ "$terminator" != "M" ]] && return 0
 
     # Tab bar click (row 3)
     if (( y == 3 )); then
@@ -647,13 +669,15 @@ handle_mouse() {
 
 # --- Smart Escape Sequence Reader ---
 # Reads until a valid terminator is found, preventing sequence fragmentation.
+# Result is stored in the nameref variable passed as $1.
 read_escape_seq() {
+    local -n _esc_out=$1
     local char
-    _ESCAPE_SEQ=""
+    _esc_out=""
 
     while IFS= read -rsn1 -t "$ESC_READ_TIMEOUT" char; do
-        _ESCAPE_SEQ+="$char"
-        case "$_ESCAPE_SEQ" in
+        _esc_out+="$char"
+        case "$_esc_out" in
             '[Z')              return 0 ;; # Shift-Tab
             O[A-Za-z])         return 0 ;; # SS3 sequences
             '['*[A-Za-z~])     return 0 ;; # CSI sequences (arrows, mouse, function keys)
@@ -667,6 +691,10 @@ read_escape_seq() {
 main() {
     if (( BASH_VERSINFO[0] < 5 )); then
         log_err "Bash 5.0+ required (found ${BASH_VERSION})"; exit 1
+    fi
+
+    if [[ ! -t 0 ]]; then
+        log_err "Interactive terminal (TTY) required on stdin"; exit 1
     fi
 
     if [[ ! -f "$CONFIG_FILE" ]]; then log_err "Config not found: ${CONFIG_FILE}"; exit 1; fi
@@ -684,12 +712,14 @@ main() {
     populate_config_cache
 
     ORIGINAL_STTY=$(stty -g 2>/dev/null) || ORIGINAL_STTY=""
-    stty -icanon -echo min 1 time 0 2>/dev/null || :
+    if ! stty -icanon -echo min 1 time 0 2>/dev/null; then
+        log_err "Failed to configure terminal (stty). Cannot run interactively."; exit 1
+    fi
 
     printf '%s%s%s%s' "$MOUSE_ON" "$CURSOR_HIDE" "$CLR_SCREEN" "$CURSOR_HOME"
     load_tab_values
 
-    local key
+    local key escape_seq
 
     while true; do
         draw_ui
@@ -697,19 +727,19 @@ main() {
         IFS= read -rsn1 key || break
 
         if [[ "$key" == $'\x1b' ]]; then
-            read_escape_seq
+            read_escape_seq escape_seq
 
-            case "$_ESCAPE_SEQ" in
-                '[Z')           switch_tab -1 ;;
-                '[A'|'OA')      navigate -1 ;;
-                '[B'|'OB')      navigate 1 ;;
-                '[C'|'OC')      adjust 1 ;;
-                '[D'|'OD')      adjust -1 ;;
-                '[5~')          navigate_page -1 ;;
-                '[6~')          navigate_page 1 ;;
-                '[H'|'[1~')     navigate_end 0 ;;
-                '[F'|'[4~')     navigate_end 1 ;;
-                '['*'<'*[Mm])   handle_mouse "$_ESCAPE_SEQ" ;;
+            case "$escape_seq" in
+                '[Z')                switch_tab -1 ;;
+                '[A'|'OA')           navigate -1 ;;
+                '[B'|'OB')           navigate 1 ;;
+                '[C'|'OC')           adjust 1 ;;
+                '[D'|'OD')           adjust -1 ;;
+                '[5~')               navigate_page -1 ;;
+                '[6~')               navigate_page 1 ;;
+                '[H'|'[1~')          navigate_end 0 ;;
+                '[F'|'[4~')          navigate_end 1 ;;
+                '['*'<'*[Mm])        handle_mouse "$escape_seq" ;;
             esac
         else
             case "$key" in
