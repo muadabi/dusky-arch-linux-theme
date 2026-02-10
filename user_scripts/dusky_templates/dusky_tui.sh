@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# Dusky TUI Engine - Hybrid Master v3.5.3 (Menu UX Fix)
+# Dusky TUI Engine - Hybrid Master v3.6.0 (Architect Edition)
 # -----------------------------------------------------------------------------
 # Target: Arch Linux / Hyprland / UWSM / Wayland
 #
-# v3.5.3 CHANGELOG:
-#   - UX:   Improved Submenu visualization to explicitly indicate drill-down
-#           capability (Changed '► ENTER' -> '[+] Open Menu ...').
+# v3.6.0 CHANGELOG:
+#   - CRITICAL: Fixed "Trap" bug where q/Ctrl-C were ignored in submenus.
+#   - CRITICAL: Fixed Config Parser corrupting '#' based color values.
+#   - UX: Restored Mouse support in Submenus (was broken in v3.5.3).
+#   - UX: Restored 'Enter' key toggling items (if not a menu).
+#   - VISUAL: Fixed negative padding glitches on long menu titles.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -18,7 +21,7 @@ set -euo pipefail
 # POINT THIS TO YOUR REAL CONFIG FILE
 readonly CONFIG_FILE="${HOME}/.config/hypr/change_me.conf"
 readonly APP_TITLE="Input Config Editor"
-readonly APP_VERSION="v3.5.3 (UX Fix)"
+readonly APP_VERSION="v3.6.0 (Stable)"
 
 # Dimensions & Layout
 declare -ri MAX_DISPLAY_ROWS=14
@@ -51,8 +54,6 @@ register_items() {
     register 3 "Advanced Settings" 'advanced_settings|menu||||'        ""
     
     # Submenu Items (registered to parent ID "advanced_settings")
-    # CRITICAL FIX: Block name changed from 'input:touchpad' to 'touchpad'.
-    # CRITICAL FIX: Key names changed (e.g., 'touchpad:enabled' -> 'enabled').
     register_child "advanced_settings" "Touchpad Enable"  'enabled|bool|touchpad|||' "true"
     register_child "advanced_settings" "Scroll Factor"    'scroll_factor|float|touchpad|0.1|5.0|0.1' "1.0"
     register_child "advanced_settings" "Tap to Click"     'tap-to-click|bool|touchpad|||' "true"
@@ -243,8 +244,12 @@ populate_config_cache() {
         /^[[:space:]]*#/ { next }
         {
             line = $0
-            sub(/#.*/, "", line)
+            # FIX: Do not blindly strip everything after #.
+            # Only strip comments if # is preceded by space, or line starts with #.
+            # We handle the value extraction carefully below.
+            
             tmpline = line
+            # Remove blocks { ... } from processing
             while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*\{/)) {
                 block_str = substr(tmpline, RSTART, RLENGTH)
                 sub(/[[:space:]]*\{/, "", block_str)
@@ -258,7 +263,12 @@ populate_config_cache() {
                     key = substr(line, 1, eq_pos - 1)
                     val = substr(line, eq_pos + 1)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+                    
+                    # Safe comment stripping:
+                    # Match space followed by #, then rest of line.
+                    sub(/[[:space:]]+#.*$/, "", val)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+                    
                     if (key != "") {
                         current_block = (depth > 0) ? block_stack[depth] : ""
                         print key "|" current_block "=" val
@@ -273,10 +283,16 @@ populate_config_cache() {
 
 find_key_line_in_block() {
     local block_name=$1 key_name=$2 file=$3
+    # Note: This awk also had the aggressive strip. Fixed here too.
     LC_NUMERIC=C awk -v target_block="$block_name" -v target_key="$key_name" '
     BEGIN { depth = 0; in_target = 0; target_depth = 0; found = 0 }
     {
-        line = $0; clean = $0; sub(/#.*/, "", clean)
+        line = $0; 
+        # Only strip full-line comments or trailing comments safely
+        clean = $0
+        sub(/^[[:space:]]*#.*/, "", clean)
+        sub(/[[:space:]]+#.*$/, "", clean)
+
         tmpline = clean
         while (match(tmpline, /[a-zA-Z0-9_.:-]+[[:space:]]*\{/)) {
             block_str = substr(tmpline, RSTART, RLENGTH)
@@ -323,7 +339,6 @@ write_value_to_file() {
             sed --follow-symlinks -i "${target_line}s|^\([[:space:]]*${safe_sed_key}[[:space:]]*=[[:space:]]*\)[^#]*|\1${safe_val}|" "$CONFIG_FILE"
         done <<< "$target_output"
     else
-        # Fix: Prevent ghost writes for missing global keys
         if [[ -z "${CONFIG_CACHE["$key|"]:-}" ]]; then
             return 1
         fi
@@ -500,6 +515,9 @@ draw_main_view() {
     done
 
     pad_needed=$(( BOX_INNER_WIDTH - current_col + 2 ))
+    # FIX: Visual safety - ensure padding is not negative
+    (( pad_needed < 0 )) && pad_needed=0
+    
     if (( pad_needed > 0 )); then
         printf -v pad_buf '%*s' "$pad_needed" ''
         tab_line+="${pad_buf}"
@@ -611,6 +629,9 @@ draw_detail_view() {
     local breadcrumb=" « Back to ${TABS[CURRENT_TAB]}"
     strip_ansi "$breadcrumb"; local b_len=${#REPLY}
     pad_needed=$(( BOX_INNER_WIDTH - b_len ))
+    # FIX: Visual safety
+    (( pad_needed < 0 )) && pad_needed=0
+    
     printf -v pad_buf '%*s' "$pad_needed" ''
     
     buf+="${C_MAGENTA}│${C_CYAN}${breadcrumb}${C_RESET}${pad_buf}${C_MAGENTA}│${C_RESET}${CLR_EOL}"$'\n'
@@ -683,7 +704,7 @@ draw_detail_view() {
         buf+="${CLR_EOL}"$'\n'
     fi
     
-    buf+=$'\n'"${C_CYAN} [Esc] Back  [r] Reset  [←/→ h/l] Adjust  [j/k] Nav${C_RESET}${CLR_EOL}"$'\n'
+    buf+=$'\n'"${C_CYAN} [Esc] Back  [r] Reset  [←/→ h/l] Adjust  [Enter] Toggle  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
     buf+="${C_CYAN} Submenu: ${C_WHITE}${CURRENT_MENU_ID}${C_RESET}${CLR_EOL}${CLR_EOS}"
     printf '%s' "$buf"
 }
@@ -781,9 +802,17 @@ check_drilldown() {
     return 1
 }
 
+go_back() {
+    CURRENT_VIEW=0
+    SELECTED_ROW=$PARENT_ROW
+    SCROLL_OFFSET=$PARENT_SCROLL
+    load_active_values
+}
+
 handle_mouse() {
     local input=$1
-    if (( CURRENT_VIEW != 0 )); then return 0; fi
+    # FIX: Remove this line that disabled mouse in submenus
+    # if (( CURRENT_VIEW != 0 )); then return 0; fi
 
     local -i button x y i start end
     local type zone
@@ -805,18 +834,33 @@ handle_mouse() {
     [[ "$terminator" != "M" ]] && return 0
 
     if (( y == TAB_ROW )); then
-        for (( i = 0; i < TAB_COUNT; i++ )); do
-            zone=${TAB_ZONES[i]}
-            start=${zone%%:*}
-            end=${zone##*:}
-            if (( x >= start && x <= end )); then set_tab "$i"; return 0; fi
-        done
+        if (( CURRENT_VIEW == 0 )); then
+            for (( i = 0; i < TAB_COUNT; i++ )); do
+                zone=${TAB_ZONES[i]}
+                start=${zone%%:*}
+                end=${zone##*:}
+                if (( x >= start && x <= end )); then set_tab "$i"; return 0; fi
+            done
+        else
+            # In detail view, clicking the header/breadcrumb could go back
+            # Breadcrumb line is roughly the TAB_ROW
+            go_back
+            return 0
+        fi
     fi
 
     local -i effective_start=$(( ITEM_START_ROW + 1 ))
     if (( y >= effective_start && y < effective_start + MAX_DISPLAY_ROWS )); then
         local -i clicked_idx=$(( y - effective_start + SCROLL_OFFSET ))
-        local -n _mouse_items_ref="TAB_ITEMS_${CURRENT_TAB}"
+        
+        # FIX: Point to correct array based on View
+        local -n _mouse_items_ref
+        if (( CURRENT_VIEW == 0 )); then
+             _mouse_items_ref="TAB_ITEMS_${CURRENT_TAB}"
+        else
+             _mouse_items_ref="SUBMENU_ITEMS_${CURRENT_MENU_ID}"
+        fi
+        
         local -i count=${#_mouse_items_ref[@]}
         if (( clicked_idx >= 0 && clicked_idx < count )); then
             SELECTED_ROW=$clicked_idx
@@ -871,7 +915,9 @@ handle_key_main() {
         G)              navigate_end 1 ;;
         $'\t')          switch_tab 1 ;;
         r|R)            reset_defaults ;;
-        ''|$'\n')       check_drilldown || true ;; # CRITICAL FIX: Prevent crash
+        # FIX: Restored Enter key behavior. 
+        # If drilldown fails (not a menu), perform 'adjust 1' (toggle/increment).
+        ''|$'\n')       check_drilldown || adjust 1 ;;
         q|Q|$'\x03')    exit 0 ;;
     esac
 }
@@ -887,15 +933,13 @@ handle_key_detail() {
         '[6~')               navigate_page 1; return ;;
         '[H'|'[1~')          navigate_end 0; return ;;
         '[F'|'[4~')          navigate_end 1; return ;;
+        '['*'<'*[Mm])        handle_mouse "$key"; return ;; # FIX: Mouse added
     esac
 
     case "$key" in
         ESC)
             # Return to Main View
-            CURRENT_VIEW=0
-            SELECTED_ROW=$PARENT_ROW
-            SCROLL_OFFSET=$PARENT_SCROLL
-            load_active_values
+            go_back
             ;;
         k|K)            navigate -1 ;;
         j|J)            navigate 1 ;;
@@ -904,6 +948,9 @@ handle_key_detail() {
         g)              navigate_end 0 ;;
         G)              navigate_end 1 ;;
         r|R)            reset_defaults ;;
+        ''|$'\n')       adjust 1 ;; # FIX: Added Enter to toggle
+        # FIX: Added Quit keys to detail view
+        q|Q|$'\x03')    exit 0 ;;
     esac
 }
 
