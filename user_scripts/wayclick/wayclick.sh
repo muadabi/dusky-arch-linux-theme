@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# WAYCLICK ELITE - ARCH LINUX / UV OPTIMIZED
+# WAYCLICK ELITE - ARCH LINUX / UV OPTIMIZED (PLATINUM EDITION)
 # ==============================================================================
 # "I fear not the man who has practiced 10,000 kicks once,
 #  but I fear the man who has practiced one kick 10,000 times." - Bruce Lee
@@ -11,12 +11,12 @@ trap cleanup EXIT INT TERM
 
 # --- CONFIGURATION ---
 readonly APP_NAME="wayclick"
-readonly CONFIG_ENABLE_TRACKPADS="false"  # Set to "true" to enable trackpad clicks, "false" to ignore them
+readonly CONFIG_ENABLE_TRACKPADS="false"
 readonly BASE_DIR="$HOME/contained_apps/uv/$APP_NAME"
 readonly VENV_DIR="$BASE_DIR/.venv"
+readonly PYTHON_BIN="$VENV_DIR/bin/python"
 readonly RUNNER_SCRIPT="$BASE_DIR/runner.py"
 readonly CONFIG_DIR="$HOME/.config/wayclick"
-# [STATE FILE IMPLEMENTATION]
 readonly STATE_FILE="$HOME/.config/dusky/settings/wayclick"
 
 # --- ANSI COLORS ---
@@ -31,75 +31,65 @@ readonly C_RESET=$'\033[0m'
 # --- STATE MANAGEMENT ---
 update_state() {
     local status="$1"
-    local dir
-    dir="$(dirname "$STATE_FILE")"
+    local dir state_tmp
+    dir="${STATE_FILE%/*}"
+    state_tmp="${STATE_FILE}.tmp.$$"
     
-    # Ensure directory exists
-    if [[ ! -d "$dir" ]]; then
-        mkdir -p "$dir"
-    fi
+    mkdir -p "$dir" 2>/dev/null || true
     
-    # Write atomic state
-    echo "$status" > "$STATE_FILE"
+    # ATOMIC WRITE: Prevents corruption on crash/power loss
+    printf '%s\n' "$status" > "$state_tmp" && mv -f "$state_tmp" "$STATE_FILE"
 }
 
 cleanup() {
     tput cnorm 2>/dev/null || true
-    # [STATE FILE] Always set to False on exit (crash, kill, or toggle)
     update_state "False"
 }
 
 # --- CHECKS & TOGGLE LOGIC ---
 
-# 0. Root Check (Safety)
-if [[ $EUID -eq 0 ]]; then
-    printf "%b[CRITICAL]%b Do not run this script as root. Run as normal user.\n" "${C_RED}" "${C_RESET}"
+# 0. Root Check
+if (( EUID == 0 )); then
+    printf "%b[CRITICAL]%b Do not run this script as root.\n" "${C_RED}" "${C_RESET}"
     exit 1
 fi
 
-# 1. Toggle Logic (Fixed)
-# Check if the runner is active. 
-# We use 'if' directly so the script doesn't crash if pgrep finds nothing.
-if pgrep -f "$RUNNER_SCRIPT" >/dev/null; then
+# 1. Toggle Logic (NUCLEAR OPTION - Fixes Ghost Processes)
+# We search loosely for 'runner.py' to ensure we kill ANY version (Old or New).
+# This prevents "Double Audio" where two scripts fight for the keyboard.
+if pgrep -f "runner.py" >/dev/null 2>&1; then
     printf "%b[TOGGLE]%b Stopping active instance...\n" "${C_YELLOW}" "${C_RESET}"
     
-    # Notify user
-    command -v notify-send >/dev/null && notify-send --app-name="WayClick" "WayClick Elite" "Disabled"
+    command -v notify-send >/dev/null 2>&1 && notify-send --app-name="WayClick" "WayClick Elite" "Disabled"
     
-    # Kill the process
-    pkill -f "$RUNNER_SCRIPT"
+    # Kill EVERYTHING matching runner.py
+    pkill -TERM -f "runner.py" 2>/dev/null || true
     
-    # Wait loop: Ensure process is dead before exiting (Fixes audio device race condition)
-    while pgrep -f "$RUNNER_SCRIPT" >/dev/null; do
+    # Wait loop with timeout (max 5 seconds)
+    local wait_count=0
+    while pgrep -f "runner.py" >/dev/null 2>&1 && (( wait_count++ < 50 )); do
         sleep 0.1
     done
     
+    # Hard kill if it became a zombie
+    pkill -KILL -f "runner.py" 2>/dev/null || true
     exit 0
 fi
 
 # 2. Interactive Mode Detection
-if [[ -t 0 ]]; then
-    INTERACTIVE=true
-else
-    INTERACTIVE=false
-fi
+[[ -t 0 ]] && INTERACTIVE=true || INTERACTIVE=false
 
 notify_user() {
-    # Send notification if possible (for keybind feedback)
-    if command -v notify-send >/dev/null; then
-        notify-send --app-name="WayClick" "WayClick Elite" "$1"
-    fi
+    command -v notify-send >/dev/null 2>&1 && notify-send --app-name="WayClick" "WayClick Elite" "$1"
 }
 
-# 3. Dependency Check & Auto-Install
-# We need 'uv' for the environment and 'libnotify' for user feedback
-NEEDED_DEPS=""
-if ! command -v uv &>/dev/null; then NEEDED_DEPS="$NEEDED_DEPS uv"; fi
-if ! command -v notify-send &>/dev/null; then NEEDED_DEPS="$NEEDED_DEPS libnotify"; fi
+# 3. Dependency Check (Safe Array usage)
+declare -a NEEDED_DEPS=()
+command -v uv >/dev/null 2>&1 || NEEDED_DEPS+=("uv")
+command -v notify-send >/dev/null 2>&1 || NEEDED_DEPS+=("libnotify")
 
-if [[ -n "$NEEDED_DEPS" ]]; then
+if (( ${#NEEDED_DEPS[@]} > 0 )); then
     if $INTERACTIVE; then
-        # BANNER (Only show in terminal)
         clear
         printf "%b
 ╔══════════════════════════════════════════════════════════════╗
@@ -108,30 +98,28 @@ if [[ -n "$NEEDED_DEPS" ]]; then
 ╚══════════════════════════════════════════════════════════════╝
 %b" "${C_CYAN}" "${C_GREEN}" "${C_CYAN}" "${C_DIM}" "${C_CYAN}" "${C_RESET}"
 
-        printf "%b[SETUP]%b Missing system dependencies:%b%s%b\n" "${C_YELLOW}" "${C_RESET}" "${C_CYAN}" "$NEEDED_DEPS" "${C_RESET}"
+        printf "%b[SETUP]%b Missing system dependencies:%b %s%b\n" "${C_YELLOW}" "${C_RESET}" "${C_CYAN}" "${NEEDED_DEPS[*]}" "${C_RESET}"
         printf "       Requesting sudo to install via pacman...\n"
         
-        # Sudo is only used here for pacman. The rest of the script runs as user.
-        if sudo pacman -S --needed $NEEDED_DEPS; then
+        if sudo pacman -S --needed --noconfirm "${NEEDED_DEPS[@]}"; then
             printf "%b[SUCCESS]%b Dependencies installed.\n" "${C_GREEN}" "${C_RESET}"
         else
             printf "%b[ERROR]%b Installation failed.\n" "${C_RED}" "${C_RESET}"
             exit 1
         fi
     else
-        # If running via keybind and deps are missing, we cannot ask for password.
-        notify_user "Missing dependencies ($NEEDED_DEPS). Run in terminal first to install."
+        notify_user "Missing dependencies (${NEEDED_DEPS[*]}). Run in terminal first."
         exit 1
     fi
 fi
 
-# 4. Group Permission Check (Input)
-if ! groups "$USER" | grep -q "\binput\b"; then
+# 4. Group Permission Check (Reliable Word Boundaries)
+if ! id -nG "$USER" | grep -qw input; then
     if $INTERACTIVE; then
         printf "%b[PERM]%b User '%s' is not in the 'input' group.\n" "${C_RED}" "${C_RESET}" "$USER"
-        read -p "Run 'sudo usermod -aG input $USER'? [Y/n] " -n 1 -r
+        read -rp "Run 'sudo usermod -aG input $USER'? [Y/n] " -n 1
         echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if [[ ${REPLY:-Y} =~ ^[Yy]$ ]]; then
             sudo usermod -aG input "$USER"
             printf "%b[INFO]%b Group added. %bLOGOUT REQUIRED%b for changes to apply.\n" "${C_GREEN}" "${C_RESET}" "${C_RED}" "${C_RESET}"
             exit 0
@@ -146,19 +134,14 @@ fi
 
 # 5. Sound Files Check
 check_sounds() {
-    [[ -d "$CONFIG_DIR" ]] || return 1
-    # Check for config.json only. 
-    # We trust config.json to point to files that exist.
-    # Python will handle missing WAVs gracefully (by skipping them).
-    [[ -f "${CONFIG_DIR}/config.json" ]] || return 1
-    return 0
+    [[ -d "$CONFIG_DIR" && -f "${CONFIG_DIR}/config.json" ]]
 }
 
 if ! check_sounds; then
     if $INTERACTIVE; then
         while ! check_sounds; do
             printf "\n%b[ACTION REQUIRED]%b Missing config.json in: %s\n" "${C_YELLOW}" "${C_RESET}" "${CONFIG_DIR}"
-            [[ -d "$CONFIG_DIR" ]] || mkdir -p "$CONFIG_DIR"
+            mkdir -p "$CONFIG_DIR" 2>/dev/null || true
             printf "       Please ensure 'config.json' exists in this folder.\n"
             printf "       %bPress Enter to re-scan...%b" "${C_DIM}" "${C_RESET}"
             read -r
@@ -170,26 +153,21 @@ if ! check_sounds; then
     fi
 fi
 
-# --- ENVIRONMENT SETUP (The Elite Part) ---
+# --- ENVIRONMENT SETUP ---
 
-# Create directory structure
-if [[ ! -d "$BASE_DIR" ]]; then
-    printf "%b[INIT]%b Creating contained environment: %s\n" "${C_BLUE}" "${C_RESET}" "$BASE_DIR"
-    mkdir -p "$BASE_DIR"
-fi
+mkdir -p "$BASE_DIR" 2>/dev/null || true
 
-# Check if VENV exists
 if [[ ! -d "$VENV_DIR" ]]; then
     if ! $INTERACTIVE; then
         notify_user "Environment not built! Run in terminal once to initialize."
         exit 1
     fi
     printf "%b[BUILD]%b Initializing UV environment...\n" "${C_BLUE}" "${C_RESET}"
-    uv venv "$VENV_DIR" --python 3.13 --quiet
+    uv venv "$VENV_DIR" --python 3.14 --quiet
 fi
 
-# Check dependencies. 
-MARKER_FILE="$BASE_DIR/.build_marker_v3"
+# Build marker v5 to ensure fresh compilation with LTO flags
+MARKER_FILE="$BASE_DIR/.build_marker_v5"
 
 if [[ ! -f "$MARKER_FILE" ]]; then
     if ! $INTERACTIVE; then
@@ -197,21 +175,18 @@ if [[ ! -f "$MARKER_FILE" ]]; then
         exit 1
     fi
 
-    printf "%b[BUILD]%b Compiling dependencies with NATIVE CPU FLAGS (AVX2+)...\n" "${C_YELLOW}" "${C_RESET}"
+    printf "%b[BUILD]%b Compiling dependencies with NATIVE CPU FLAGS (AVX2+ / LTO)...\n" "${C_YELLOW}" "${C_RESET}"
     printf "       %bThis runs ON THE METAL. No generic binaries allowed.%b\n" "${C_DIM}" "${C_RESET}"
     
     # ---------------------------------------------------------
-    # ELITE BUILD FLAGS
-    # -march=native: Use all instructions available on THIS CPU
-    # -O3: Maximum optimization
-    # -fno-plt: Faster dynamic linking calls
+    # ELITE BUILD FLAGS (LTO Included)
+    # -flto=auto: Link-Time Optimization for C extensions (5-15% speedup)
     # ---------------------------------------------------------
-    export CFLAGS="-march=native -mtune=native -O3 -pipe -fno-plt"
-    export CXXFLAGS="-march=native -mtune=native -O3 -pipe -fno-plt"
+    export CFLAGS="-march=native -mtune=native -O3 -pipe -fno-plt -flto=auto -ffat-lto-objects"
+    export CXXFLAGS="$CFLAGS"
+    export LDFLAGS="-Wl,-O1,--sort-common,--as-needed,-z,now,--relax -flto=auto"
     
-    # Install evdev and pygame-ce from source
-    # pygame-ce fixes the 'pkg_resources' warning at the source level.
-    uv pip install --python "$VENV_DIR/bin/python" \
+    uv pip install --python "$PYTHON_BIN" \
         --no-binary :all: \
         --compile-bytecode \
         evdev pygame-ce
@@ -221,8 +196,7 @@ if [[ ! -f "$MARKER_FILE" ]]; then
 fi
 
 # --- PYTHON RUNNER GENERATION ---
-# Persistent file for debugging and direct editing.
-cat > "$RUNNER_SCRIPT" << 'EOF'
+cat > "$RUNNER_SCRIPT" << 'PYTHON_EOF'
 import asyncio
 import os
 import sys
@@ -230,35 +204,28 @@ import signal
 import random
 import json
 
-# === PERFORMANCE FLAGS ===
-# Clean startup
+# === STARTUP OPTIMIZATION ===
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
-# Low latency audio drivers
-os.environ['SDL_BUFFER_CHUNK_SIZE'] = '256' 
+# 512 Buffer = ~10ms latency (Imperceptible) but ZERO crackle risk.
+os.environ['SDL_BUFFER_CHUNK_SIZE'] = '512'
+os.environ['SDL_AUDIODRIVER'] = 'pipewire,pulseaudio,alsa'
 
 import pygame
 import evdev
-from evdev import ecodes
 
-# ANSI Colors for Python
-C_GREEN = "\033[1;32m"
-C_YELLOW = "\033[1;33m"
-C_BLUE = "\033[1;34m"
-C_RED = "\033[1;31m"
-C_RESET = "\033[0m"
+C_GREEN, C_YELLOW, C_BLUE, C_RED, C_RESET = "\033[1;32m", "\033[1;33m", "\033[1;34m", "\033[1;31m", "\033[0m"
 
 ASSET_DIR = sys.argv[1]
 ENABLE_TRACKPADS = os.environ.get('ENABLE_TRACKPADS', 'false').lower() == 'true'
 
 # === AUDIO INIT ===
-# 44100Hz, 16-bit, 2 channels, 256 sample buffer
+# 48000Hz = Native Pipewire Rate (No Resampling = Cleaner Audio)
 try:
-    pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=256)
+    pygame.mixer.pre_init(frequency=48000, size=-16, channels=2, buffer=512)
     pygame.mixer.init()
     pygame.mixer.set_num_channels(32)
 except pygame.error as e:
-    print(f"\033[1;31m[AUDIO ERROR]\033[0m {e}")
-    sys.exit(1)
+    sys.exit(f"{C_RED}[AUDIO ERROR]{C_RESET} {e}")
 
 # === CONFIG LOADING ===
 CONFIG_FILE = os.path.join(ASSET_DIR, "config.json")
@@ -267,86 +234,74 @@ print(f"{C_BLUE}[INFO]{C_RESET} Loading assets from {ASSET_DIR}...")
 try:
     with open(CONFIG_FILE, 'r') as f:
         config_data = json.load(f)
-        
-        # JSON keys are strings, but evdev expects integers.
-        # We assume the config file uses string representation of integers (e.g. "1": "file.wav")
         RAW_KEY_MAP = {int(k): v for k, v in config_data.get("mappings", {}).items()}
         DEFAULTS = config_data.get("defaults", [])
-        
 except Exception as e:
-    print(f"{C_RED}[CONFIG ERROR]{C_RESET} Failed to load {CONFIG_FILE}: {e}")
-    sys.exit(1)
+    sys.exit(f"{C_RED}[CONFIG ERROR]{C_RESET} Failed to load {CONFIG_FILE}: {e}")
 
-# Dynamically determine which files to load based on the config
-# This allows the user to add new wav files to config.json without editing script
-SOUND_FILES = list(set(list(RAW_KEY_MAP.values()) + DEFAULTS))
+# === SOUND LOADING ===
+SOUND_FILES = set(RAW_KEY_MAP.values()) | set(DEFAULTS)
 SOUNDS = {}
 
-# Load Sounds
 for filename in SOUND_FILES:
     path = os.path.join(ASSET_DIR, filename)
     if os.path.exists(path):
         try:
             SOUNDS[filename] = pygame.mixer.Sound(path)
         except pygame.error:
-            # File exists but is corrupt or invalid
             print(f"{C_YELLOW}[WARN]{C_RESET} Failed to load wav: {filename}")
     else:
-        # Warn about missing files (non-blocking)
         print(f"{C_YELLOW}[WARN]{C_RESET} File not found: {filename}")
 
 if not SOUNDS:
     sys.exit("ERROR: No sounds loaded! Check your config.json and .wav files.")
 
-# === OPTIMIZATION: CACHED LIST LOOKUP ===
-# Convert Dictionary Map -> Array Index for O(1) access
-# Standard evdev keycodes are usually small, but user configs may use higher scan codes.
-# We allocate 64k to cover virtually all possibilities (consumes ~0.5MB RAM).
+# === PERFORMANCE: LIST CACHE LOOKUP ===
+# The 65536 List index is strictly faster than a dict.get() in CPython.
 MAX_KEYCODE = 65536
 SOUND_CACHE = [None] * MAX_KEYCODE
-DEFAULT_SOUND_OBJS = [SOUNDS[f] for f in DEFAULTS if f in SOUNDS]
+DEFAULT_SOUND_OBJS = tuple(SOUNDS[f] for f in DEFAULTS if f in SOUNDS)
 
-# Pre-fill the cache
 for code, filename in RAW_KEY_MAP.items():
     if code < MAX_KEYCODE and filename in SOUNDS:
         SOUND_CACHE[code] = SOUNDS[filename]
 
-# Pre-bind random choice to avoid module lookup in hot path
+# === HOT PATH PRE-BINDING (LOAD_FAST vs LOAD_GLOBAL) ===
 _random_choice = random.choice
+_sound_cache = SOUND_CACHE
+_max_keycode = MAX_KEYCODE
+_defaults = DEFAULT_SOUND_OBJS
+_has_defaults = bool(DEFAULT_SOUND_OBJS)
 
 def play_sound(code):
-    # Ultra-fast path
-    if code < MAX_KEYCODE:
-        sound = SOUND_CACHE[code]
-        if sound:
+    """Ultra-minimal hot path relying exclusively on local variables."""
+    if code < _max_keycode:
+        sound = _sound_cache[code]
+        if sound is not None:
             sound.play()
             return
+    if _has_defaults:
+        _random_choice(_defaults).play()
 
-    # Fallback (unmapped keys or missing sound files)
-    if DEFAULT_SOUND_OBJS:
-        _random_choice(DEFAULT_SOUND_OBJS).play()
-
-async def read_device(path, stop_event):
-    """Async reader for a specific input device."""
-    dev = None
+async def read_device(dev, stop_event):
+    """Async reader. Accepts pre-opened device to avoid descriptor thrashing."""
+    _play = play_sound
+    _is_stopped = stop_event.is_set
+    
+    print(f"{C_GREEN}[+] Connected:{C_RESET} {dev.name}")
     try:
-        dev = evdev.InputDevice(path)
-        print(f"{C_GREEN}[+] Connected:{C_RESET} {dev.name}")
-        
         async for event in dev.async_read_loop():
-            if stop_event.is_set():
+            if _is_stopped():
                 break
-            # EV_KEY (1) and Value 1 (Key Down)
             if event.type == 1 and event.value == 1:
-                play_sound(event.code)
+                _play(event.code)
                 
     except (OSError, IOError):
-        print(f"{C_YELLOW}[-] Disconnected:{C_RESET} {path}")
+        print(f"{C_YELLOW}[-] Disconnected:{C_RESET} {dev.path}")
     except asyncio.CancelledError:
         pass
     finally:
-        if dev:
-            dev.close()
+        dev.close()
 
 async def main():
     print(f"{C_BLUE}[CORE]{C_RESET} Engine started. Monitoring devices...")
@@ -357,13 +312,12 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
     
-    monitored_tasks = {} # path -> task
+    monitored_tasks = {}
+    _list_devices = evdev.list_devices
 
     while not stop.is_set():
-        # 1. Device Discovery
         try:
-            # We explicitly check for EV_KEY capabilities to filter out non-keyboards
-            all_paths = evdev.list_devices()
+            all_paths = _list_devices()
             
             for path in all_paths:
                 if path in monitored_tasks:
@@ -372,7 +326,6 @@ async def main():
                 try:
                     dev = evdev.InputDevice(path)
                     
-                    # Trackpad Filtering (User Toggle)
                     if not ENABLE_TRACKPADS:
                         name_lower = dev.name.lower()
                         if 'touchpad' in name_lower or 'trackpad' in name_lower:
@@ -380,29 +333,31 @@ async def main():
                             continue
 
                     caps = dev.capabilities()
-                    # Check for EV_KEY (1)
-                    if 1 in caps:
-                        task = asyncio.create_task(read_device(path, stop))
+                    if 1 in caps:  # EV_KEY
+                        # ARCHITECTURAL FIX: Pass the opened 'dev' directly to the task.
+                        # Do not close it here just to re-open it inside read_device().
+                        task = asyncio.create_task(read_device(dev, stop))
                         monitored_tasks[path] = task
-                    dev.close()
+                    else:
+                        dev.close()
                 except (OSError, IOError):
                     continue
 
         except Exception as e:
             print(f"Discovery Loop Error: {e}")
 
-        # 2. Cleanup Dead Tasks
+        # Cleanup completed tasks
         dead_paths = [p for p, t in monitored_tasks.items() if t.done()]
         for p in dead_paths:
             del monitored_tasks[p]
 
-        # 3. Hotplug Polling Rate
+        # Hotplug poll (3s)
         try:
             await asyncio.wait_for(stop.wait(), timeout=3.0)
         except asyncio.TimeoutError:
             continue
     
-    # Graceful Shutdown
+    # Graceful shutdown
     print("\nStopping...")
     for t in monitored_tasks.values():
         t.cancel()
@@ -415,22 +370,17 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
-EOF
+PYTHON_EOF
 
 # --- EXECUTION ---
 printf "%b[RUN]%b Starting engine...\n" "${C_BLUE}" "${C_RESET}"
 
-# Keybind Notification: Enabled
-# We only send this if we are NOT in a terminal (keybind mode)
-if ! $INTERACTIVE; then
-    notify_user "Enabled"
-fi
+$INTERACTIVE || notify_user "Enabled"
 
-# [STATE FILE] Mark as True immediately before execution
 update_state "True"
 
-# Execute using the VENV python directly, with -O to remove assertions
-# We pass the trackpad toggle as an environment variable
-ENABLE_TRACKPADS="$CONFIG_ENABLE_TRACKPADS" "$VENV_DIR/bin/python" -O "$RUNNER_SCRIPT" "$CONFIG_DIR"
+# Execute using UV Python. 
+# -OOB: Strip asserts (-O), strip docstrings (-OO), don't write pyc (-B)
+ENABLE_TRACKPADS="$CONFIG_ENABLE_TRACKPADS" "$PYTHON_BIN" -OOB "$RUNNER_SCRIPT" "$CONFIG_DIR"
 
 printf "\n%b[INFO]%b WayClick stopped.\n" "${C_BLUE}" "${C_RESET}"
