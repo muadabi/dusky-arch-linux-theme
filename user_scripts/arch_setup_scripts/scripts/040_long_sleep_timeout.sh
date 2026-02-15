@@ -42,6 +42,11 @@ readonly C_BOLD=$'\033[1m'
 readonly C_RESET=$'\033[0m'
 
 #===============================================================================
+# RUNTIME FLAGS
+#===============================================================================
+AUTO_MODE=false
+
+#===============================================================================
 # UTILITY FUNCTIONS
 #===============================================================================
 TEMP_FILE=""
@@ -157,6 +162,18 @@ update_all_timeouts() {
 #===============================================================================
 
 main() {
+    # 0. Argument Parsing
+    for arg in "$@"; do
+        case "$arg" in
+            --auto|-a)
+                AUTO_MODE=true
+                ;;
+            *)
+                die "Unknown argument: $arg (usage: $SCRIPT_NAME [--auto|-a])"
+                ;;
+        esac
+    done
+
     # 1. Validation (Fail fast before showing UI)
     [[ -f "$CONFIG_FILE" ]] || die "Config file not found: $CONFIG_FILE"
     [[ -w "$CONFIG_FILE" ]] || die "Config file not writable: $CONFIG_FILE"
@@ -174,7 +191,9 @@ main() {
     fi
 
     # 3. User Interface
-    clear
+    if [[ "$AUTO_MODE" == false ]]; then
+        clear
+    fi
     printf "${C_YELLOW}${C_BOLD}>>> SETUP POWER CONFIGURATION NOTICE <<<${C_RESET}\n"
     echo "------------------------------------------------------------------------"
     printf "To ensure the installation/setup process completes without interruption:\n\n"
@@ -198,8 +217,12 @@ main() {
     printf "%-15s : ${C_GREEN}%s${C_RESET} s\n" "Screen Off" "$TIMEOUT_OFF"
     printf "%-15s : ${C_GREEN}%s${C_RESET} s\n" "System Suspend" "$TIMEOUT_SUSPEND"
     echo "------------------------------------------------------------------------"
-    printf "${C_BOLD}Press [Enter] to apply these settings and proceed...${C_RESET}"
-    read -r
+    if [[ "$AUTO_MODE" == false ]]; then
+        printf "${C_BOLD}Press [Enter] to apply these settings and proceed...${C_RESET}"
+        read -r
+    else
+        info "Auto mode: applying settings without confirmation."
+    fi
     echo
 
     # 4. Apply Changes
