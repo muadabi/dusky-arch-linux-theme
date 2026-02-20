@@ -48,7 +48,7 @@
             "actions": [
                 {
                     "label": "󰡬",
-                    "command": "uwsm-app -- $HOME/user_scripts/sliders/hyprsunset_slider.sh"
+                    "command": "uwsm-app -- $HOME/user_scripts/sliders/dusky_sliders.py"
                 },
                 {
                     "label": "",

@@ -141,20 +141,18 @@ declare -g SUDO_PID=""
 declare -g LOGGING_INITIALIZED=0
 declare -g EXECUTION_PHASE=0
 
-# Bash 5.3 O(1) Performance Arrays
-declare -gA COMPLETED_SCRIPTS=()
-declare -gA SCRIPT_CACHE=()
-
-# 4. Colors (Zero-Subshell ANSI Hardcodes)
+# 4. Colors
 declare -g RED="" GREEN="" BLUE="" YELLOW="" BOLD="" RESET=""
 
-if [[ -t 1 ]]; then
-    RED=$'\e[1;31m'
-    GREEN=$'\e[1;32m'
-    YELLOW=$'\e[1;33m'
-    BLUE=$'\e[1;34m'
-    BOLD=$'\e[1m'
-    RESET=$'\e[0m'
+if [[ -t 1 ]] && command -v tput &>/dev/null; then
+    if (( $(tput colors 2>/dev/null || echo 0) >= 8 )); then
+        RED=$(tput setaf 1)
+        GREEN=$(tput setaf 2)
+        YELLOW=$(tput setaf 3)
+        BLUE=$(tput setaf 4)
+        BOLD=$(tput bold)
+        RESET=$(tput sgr0)
+    fi
 fi
 
 # 5. Logging
@@ -231,31 +229,11 @@ trim() {
     printf '%s' "$var"
 }
 
-# O(1) Memory State Loader
-load_state() {
-    COMPLETED_SCRIPTS=()
-    if [[ -f "$STATE_FILE" ]]; then
-        # Faster than while/read loop, instantly loads file into bash array
-        mapfile -t _state_lines < "$STATE_FILE" 2>/dev/null || true
-        for _line in "${_state_lines[@]:-}"; do
-            [[ -n "$_line" ]] && COMPLETED_SCRIPTS["$_line"]=1
-        done
-    fi
-}
-
 resolve_script() {
     local name="$1"
-
-    # O(1) Lookup: Check if we've already found this file
-    if [[ -n "${SCRIPT_CACHE[$name]:-}" ]]; then
-        printf '%s' "${SCRIPT_CACHE[$name]}"
-        return 0
-    fi
-
     # Contains a slash → direct path, no searching
     if [[ "$name" == */* ]]; then
         if [[ -f "$name" ]]; then
-            SCRIPT_CACHE["$name"]="$name"
             printf '%s' "$name"
             return 0
         fi
@@ -264,7 +242,6 @@ resolve_script() {
     # No slash → search directories in order, first match wins
     for dir in "${SCRIPT_SEARCH_DIRS[@]}"; do
         if [[ -f "${dir}/${name}" ]]; then
-            SCRIPT_CACHE["$name"]="${dir}/${name}"
             printf '%s' "${dir}/${name}"
             return 0
         fi
@@ -340,7 +317,7 @@ preflight_check() {
             exit 1
         fi
     else
-        log "SUCCESS" "All sequence files verified and cached."
+        log "SUCCESS" "All sequence files verified."
     fi
 }
 
@@ -381,13 +358,12 @@ main() {
         exit 1
     fi
 
-    # --- READ-ONLY ARGUMENT HANDLING ---
+    # --- ARGUMENT HANDLING ---
     case "${1:-}" in
         --help|-h)
             show_help
             ;;
         --dry-run|-d)
-            load_state
             echo -e "\n${YELLOW}=== DRY RUN MODE ===${RESET}"
             echo -e "State file: ${BOLD}${STATE_FILE}${RESET}\n"
 
@@ -426,7 +402,7 @@ main() {
                 if ! resolve_script "$filename" > /dev/null; then
                     status="${RED}[MISSING]${RESET}"
                     ((++missing_count))
-                elif [[ -n "${COMPLETED_SCRIPTS[$filename]:-}" ]]; then
+                elif [[ -f "$STATE_FILE" ]] && grep -Fxq -- "$filename" "$STATE_FILE" 2>/dev/null; then
                     status="${GREEN}[DONE]${RESET}"
                     ((++completed_count))
                 else
@@ -446,17 +422,6 @@ main() {
             echo "No changes were made."
             exit 0
             ;;
-    esac
-
-    # --- CONCURRENT EXECUTION GUARD ---
-    exec 9>"$LOCK_FILE"
-    if ! flock -n 9; then
-        echo -e "${RED}ERROR: Another instance of this script is already running.${RESET}"
-        exit 1
-    fi
-
-    # --- MUTATING ARGUMENT HANDLING ---
-    case "${1:-}" in
         --reset)
             rm -f "$STATE_FILE"
             echo "State file reset. Starting fresh."
@@ -469,6 +434,13 @@ main() {
             exit 1
             ;;
     esac
+
+    # --- CONCURRENT EXECUTION GUARD ---
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        echo -e "${RED}ERROR: Another instance of this script is already running.${RESET}"
+        exit 1
+    fi
 
     setup_logging
     validate_search_dirs
@@ -501,9 +473,6 @@ main() {
             log "INFO" "Continuing from previous session."
         fi
     fi
-
-    # Load State into O(1) Memory Array
-    load_state
 
     # --- EXECUTION MODE SELECTION ---
     local interactive_mode=0
@@ -564,8 +533,8 @@ main() {
             esac
         done
 
-        # --- STATE FILE SKIP CHECK (O(1) Array Lookup) ---
-        if [[ -n "${COMPLETED_SCRIPTS[$filename]:-}" ]]; then
+        # --- STATE FILE SKIP CHECK ---
+        if grep -Fxq -- "$filename" "$STATE_FILE"; then
             log "WARN" "[${current_index}/${total_scripts}] Skipping $filename (Already Completed)"
             continue
         fi
@@ -613,7 +582,6 @@ main() {
 
             if [[ $result -eq 0 ]]; then
                 echo "$filename" >> "$STATE_FILE"
-                COMPLETED_SCRIPTS["$filename"]=1 # Update Memory Array instantly
                 log "SUCCESS" "Finished $filename"
                 if [[ "$POST_SCRIPT_DELAY" != "0" ]]; then
                     sleep "$POST_SCRIPT_DELAY"
