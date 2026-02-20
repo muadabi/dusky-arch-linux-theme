@@ -218,7 +218,7 @@ class SliderApp(Adw.Application):
         css_provider.load_from_string("""
             window {
                 background-color: alpha(@window_bg_color, 0.95);
-                border-radius: 12px;
+                border-radius: 8px;
             }
             .slider-row { background-color: transparent; padding: 10px 12px; }
             scale.pill-scale trough { min-height: 16px; border-radius: 8px; background-color: rgba(255, 255, 255, 0.08); }
