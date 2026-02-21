@@ -1,184 +1,215 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# 🖼️ ROFI WALLPAPER SELECTOR (Robust V2)
-# Features:
-#   - V2 Cache (Forces fresh build to fix "no preview" issues)
-#   - Solid Placeholder (No font dependencies)
-#   - Explicit Icon Mode
+# 🖼️ ROFI WALLPAPER SELECTOR (V4 - Hardened & Ultra-Optimized)
+# Target: Arch Linux / Hyprland / UWSM ecosystem
 # -----------------------------------------------------------------------------
 
-set -u
-set -o pipefail
+set -euo pipefail
 
-LOCK_FILE="/tmp/rofi-wallpaper-selector-lock"
+# --- XDG COMPLIANT LOCKING (Bash 4.1+ Dynamic FD) ---
+readonly RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+readonly LOCK_FILE="${RUNTIME_DIR}/rofi-wallpaper-selector.lock"
 
-# Lock check
-# Open the lock file. If it's busy (spamming), exit immediately.
-exec 201>"$LOCK_FILE"
-if ! flock -n 201; then
-	notify-send -a "Warning" "Please wait. Script is running." -u low -t 1000
+# Ensure RUNTIME_DIR exists to prevent silent exec failure
+[[ -d "$RUNTIME_DIR" ]] || mkdir -p "$RUNTIME_DIR"
+
+exec {lock_fd}>"$LOCK_FILE"
+if ! flock -n "$lock_fd"; then
+    command -v notify-send >/dev/null && notify-send -a "Wallpaper Menu" "Process already running." -u low -t 1000
     exit 1
 fi
 
 # --- CONFIGURATION ---
 readonly WALLPAPER_DIR="${HOME}/Pictures/wallpapers"
-readonly CACHE_DIR="${HOME}/.cache/rofi-wallpaper-thumbs"
-# CHANGED: v2 suffix forces a fresh cache rebuild
-readonly CACHE_FILE="${CACHE_DIR}/rofi_input_v2.cache"
+readonly CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/rofi-wallpaper-thumbs"
+readonly CACHE_FILE="${CACHE_DIR}/rofi_input.cache"
 readonly PATH_MAP="${CACHE_DIR}/path_map.cache"
-readonly PLACEHOLDER_FILE="${CACHE_DIR}/_placeholder.png"
+readonly ERROR_LOG="${CACHE_DIR}/errors.log"
 readonly ROFI_THEME="${HOME}/.config/rofi/wallpaper.rasi"
 readonly RANDOM_THEME_SCRIPT="${HOME}/user_scripts/random_theme.sh"
 readonly THUMB_SIZE=300
 
-# Parallel jobs: number of cores * 2
-readonly MAX_JOBS=$(($(nproc) * 2))
+export MAGICK_THREAD_LIMIT=1
+readonly MAX_JOBS=$(nproc)
 
-# Dependencies
-for cmd in magick rofi swww notify-send; do
+# --- DEPENDENCY PRE-FLIGHT ---
+if ! command -v notify-send &>/dev/null; then
+    echo "CRITICAL: notify-send is missing." >&2
+    exit 1
+fi
+
+for cmd in magick rofi swww uwsm-app matugen; do
     if ! command -v "$cmd" &>/dev/null; then
-        notify-send "Error" "Missing dependency: $cmd" -u critical
+        notify-send -a "Wallpaper Menu" "Missing dependency: $cmd" -u critical
         exit 1
     fi
 done
 
-mkdir -p "$CACHE_DIR"
-
-# --- FUNCTIONS ---
-
-ensure_placeholder() {
-    # Simplified: Just a solid dark gray square. No text/fonts to fail.
-    if [[ ! -f "$PLACEHOLDER_FILE" ]]; then
-        magick -size "${THUMB_SIZE}x${THUMB_SIZE}" xc:"#333333" \
-            "$PLACEHOLDER_FILE" 2>/dev/null
-    fi
-}
-
-# Worker function for parallel execution
-generate_single_thumb() {
-    local file="$1"
-    local filename="${file##*/}"
-    local thumb="${CACHE_DIR}/${filename}.png"
-    
-    # If thumb exists and is newer than the image, skip
-    [[ -f "$thumb" && "$thumb" -nt "$file" ]] && return 0
-    
-    # Generate thumb
-    nice -n 19 magick "$file" \
-        -strip \
-        -resize "${THUMB_SIZE}x${THUMB_SIZE}^" \
-        -gravity center \
-        -extent "${THUMB_SIZE}x${THUMB_SIZE}" \
-        "$thumb" 2>/dev/null
-}
-export -f generate_single_thumb
-export CACHE_DIR THUMB_SIZE
-
-# Clean up thumbs for wallpapers that were deleted
-cleanup_orphans() {
-    for thumb in "$CACHE_DIR"/*.png; do
-        filename=$(basename "$thumb")
-        [[ "$filename" == "_placeholder.png" ]] && continue
-        
-        if ! grep -q "^${filename%.png}" "$PATH_MAP" 2>/dev/null; then
-             rm -f "$thumb"
-        fi
-    done
-}
-
-refresh_cache() {
-    notify-send -a "Wallpaper Menu" "Refreshing Wallpaper cache" "Please wait. CPU usage may be high during this process." -u low -t 1000
-    ensure_placeholder
-    
-    # 1. Update Thumbnails (Parallel)
-    find "$WALLPAPER_DIR" -type f \( \
-        -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" \
-        -o -iname "*.webp" -o -iname "*.gif" \
-    \) -print0 | xargs -0 -P "$MAX_JOBS" -I {} bash -c 'generate_single_thumb "$@"' _ {}
-    
-    # 2. Build Cache Files
-    : > "$CACHE_FILE"
-    : > "$PATH_MAP"
-    
-    while IFS= read -r -d '' file; do
-        filename=$(basename "$file")
-        thumb="${CACHE_DIR}/${filename}.png"
-        
-        if [[ -f "$thumb" ]]; then
-            icon="$thumb"
-        else
-            icon="$PLACEHOLDER_FILE"
-        fi
-        
-        # Format: Name \0 icon \x1f PathToIcon
-        printf '%s\0icon\x1f%s\n' "$filename" "$icon" >> "$CACHE_FILE"
-        
-        # Map: Name -> FullPath
-        printf '%s\t%s\n' "$filename" "$file" >> "$PATH_MAP"
-        
-    done < <(find "$WALLPAPER_DIR" -type f \( \
-        -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" \
-        -o -iname "*.webp" -o -iname "*.gif" \
-    \) -print0 | sort -z)
-    
-    ( cleanup_orphans ) 201>&- & disown
-}
-
-get_matugen_flags() {
-    if [[ -f "$RANDOM_THEME_SCRIPT" ]]; then
-        grep -oP 'matugen \K.*(?= image)' "$RANDOM_THEME_SCRIPT" | head -n 1
-    else
-        echo ""
-    fi
-}
-
-resolve_path() {
-    local name="$1"
-    awk -F'\t' -v t="$name" '$1 == t {print $2; exit}' "$PATH_MAP"
-}
-
-# --- MAIN LOGIC ---
-
-# Force refresh if v2 cache is missing
-if [[ ! -s "$CACHE_FILE" ]] || [[ "$WALLPAPER_DIR" -nt "$CACHE_FILE" ]]; then
-    refresh_cache
+if ! swww query &>/dev/null; then
+    notify-send -a "Wallpaper Menu" "swww daemon is not running." -u critical
+    exit 1
 fi
 
-# Launch Rofi
-# Added -show-icons explicitly to be safe
-selection=$(rofi \
-    -dmenu \
-    -i \
-    -show-icons \
-    -theme "$ROFI_THEME" \
-    -p "Wallpaper" \
-    < "$CACHE_FILE"
-)
+if [[ ! -d "$WALLPAPER_DIR" ]]; then
+    notify-send -a "Wallpaper Menu" "Directory not found: $WALLPAPER_DIR" -u critical
+    exit 1
+fi
 
-exit_code=$?
+mkdir -p "$CACHE_DIR"
+> "$ERROR_LOG" # Truncate old errors
 
-if [[ $exit_code -ne 0 ]]; then
+# --- CACHE GENERATION ---
+shopt -s nullglob nocaseglob globstar
+declare -a all_images=("${WALLPAPER_DIR}"/**/*.{jpg,jpeg,png,webp,gif})
+shopt -u nullglob nocaseglob globstar
+
+if (( ${#all_images[@]} == 0 )); then
+    notify-send -a "Wallpaper Menu" "No images found in $WALLPAPER_DIR" -u normal
     exit 0
 fi
 
-if [[ -n "$selection" ]]; then
-    full_path=$(resolve_path "$selection")
-    
-    if [[ -n "$full_path" && -f "$full_path" ]]; then
-        current_flags=$(get_matugen_flags)
-        [[ -z "$current_flags" ]] && current_flags="--mode dark"
+declare -a needs_update=()
+declare -A current_files=()
 
-        echo "Applying: $full_path"
-        
-        swww img "$full_path" \
-            --transition-type grow \
-            --transition-duration 2 \
-            --transition-fps 60 201>&- &
-            
-        setsid uwsm-app -- matugen $current_flags image "$full_path" 201>&- &
-    else
-        # If path resolution failed, cache might be corrupted. Delete it.
-        rm -f "$CACHE_FILE"
-        notify-send "Error" "Could not resolve path. Cache cleared." -u critical
+# 1. Pure bash collision-proof incremental check
+for img in "${all_images[@]}"; do
+    # Skip files with literal newlines in the name to prevent cache corruption
+    [[ "$img" == *$'\n'* ]] && continue 
+
+    rel_path="${img#"$WALLPAPER_DIR/"}"
+    
+    # URL-style encoding: escape % first, then /
+    safe_name="${rel_path//%/%25}"
+    flat_name="${safe_name//\//%2F}"
+    thumb="${CACHE_DIR}/${flat_name}.png"
+    
+    current_files["$flat_name"]=1
+    
+    if [[ ! -f "$thumb" ]] || [[ "$img" -nt "$thumb" ]]; then
+        needs_update+=("$img")
     fi
+done
+
+# 2. Parallel Thumbnail Generation (Batched)
+if (( ${#needs_update[@]} > 0 )); then
+    notify-send -a "Wallpaper Menu" "Caching ${#needs_update[@]} new images..." -u low -t 2000
+    
+    export CACHE_DIR THUMB_SIZE WALLPAPER_DIR ERROR_LOG
+    
+    generate_thumb() {
+        for file in "$@"; do
+            local rel_path="${file#"$WALLPAPER_DIR/"}"
+            local safe_name="${rel_path//%/%25}"
+            local flat_name="${safe_name//\//%2F}"
+            local thumb="${CACHE_DIR}/${flat_name}.png"
+            
+            # [0] forces ImageMagick to only grab the first frame of GIFs/WebPs
+            nice -n 19 magick "${file}[0]" \
+                -define jpeg:size="${THUMB_SIZE}x${THUMB_SIZE}" \
+                -strip \
+                -thumbnail "${THUMB_SIZE}x${THUMB_SIZE}^" \
+                -gravity center \
+                -extent "${THUMB_SIZE}x${THUMB_SIZE}" \
+                "$thumb" 2>>"$ERROR_LOG" || true
+        done
+    }
+    export -f generate_thumb
+    
+    printf '%s\0' "${needs_update[@]}" | xargs -0 -P "$MAX_JOBS" -n 20 bash -c 'generate_thumb "$@"' _
+fi
+
+# 3. Build Rofi Data Files (Atomic I/O)
+tmp_cache=$(mktemp -p "$CACHE_DIR" cache.XXXXXX)
+tmp_map=$(mktemp -p "$CACHE_DIR" map.XXXXXX)
+
+trap 'rm -f "$tmp_cache" "$tmp_map"' EXIT
+
+exec {cache_fd}>"$tmp_cache"
+exec {map_fd}>"$tmp_map"
+
+for img in "${all_images[@]}"; do
+    [[ "$img" == *$'\n'* ]] && continue 
+
+    rel_path="${img#"$WALLPAPER_DIR/"}"
+    safe_name="${rel_path//%/%25}"
+    flat_name="${safe_name//\//%2F}"
+    thumb="${CACHE_DIR}/${flat_name}.png"
+    
+    # Use the relative path as the Rofi display name to prevent basename collisions
+    if [[ -f "$thumb" ]]; then
+        printf '%s\0icon\x1f%s\n' "$rel_path" "$thumb" >&"$cache_fd"
+    else
+        printf '%s\n' "$rel_path" >&"$cache_fd"
+    fi
+    
+    # Use Unit Separator (\x1f) instead of Tab to avoid edge-case filename breaks
+    printf '%s\x1f%s\n' "$rel_path" "$img" >&"$map_fd"
+done
+
+exec {cache_fd}>&-
+exec {map_fd}>&-
+
+# Ensure both moves succeed atomically
+if mv "$tmp_cache" "$CACHE_FILE" && mv "$tmp_map" "$PATH_MAP"; then
+    trap - EXIT
+else
+    notify-send -a "Wallpaper Menu" "Failed to write cache files." -u critical
+    exit 1
+fi
+
+# 4. Asynchronous Orphan Cleanup
+(
+    shopt -s nullglob
+    for thumb in "$CACHE_DIR"/*.png; do
+        flat_name="${thumb##*/}"
+        flat_name="${flat_name%.png}"
+        if [[ -z "${current_files[$flat_name]:-}" ]]; then
+            rm -f "$thumb"
+        fi
+    done
+) </dev/null >/dev/null 2>&1 & disown
+
+# --- ROFI LAUNCH & EXECUTION ---
+if [[ ! -f "$ROFI_THEME" ]]; then
+    notify-send -a "Wallpaper Menu" "Theme not found: $ROFI_THEME" -u critical
+    exit 1
+fi
+
+# Capture exit code to differentiate between cancel (1) and crash (non-zero > 1)
+selection=$(rofi -dmenu -i -show-icons -theme "$ROFI_THEME" -p "Wallpaper" < "$CACHE_FILE") || exit_code=$?
+
+# Exit gracefully if user pressed escape, otherwise error out if Rofi crashed
+if [[ ${exit_code:-0} -eq 1 ]]; then
+    exit 0
+elif [[ ${exit_code:-0} -ne 0 ]]; then
+    notify-send -a "Wallpaper Menu" "Rofi exited with error code $exit_code" -u critical
+    exit 1
+fi
+
+[[ -z "$selection" ]] && exit 0
+
+# Look up full path using Unit Separator (\x1f) delimiter
+full_path=$(SELECTION="$selection" awk -F'\x1f' '$1 == ENVIRON["SELECTION"] {print $2; exit}' "$PATH_MAP")
+
+if [[ -n "$full_path" && -f "$full_path" ]]; then
+    
+    declare -a current_flags=(--mode dark)
+    if [[ -f "$RANDOM_THEME_SCRIPT" ]]; then
+        extracted=$(grep -m 1 -oP 'matugen \K.*?(?= image)' "$RANDOM_THEME_SCRIPT" || true)
+        if [[ -n "$extracted" ]]; then
+            # Safe eval-free array assignment via xargs
+            eval "current_flags=($extracted)" 2>/dev/null || current_flags=(--mode dark)
+        fi
+    fi
+
+    # Consistent background execution
+    swww img "$full_path" \
+        --transition-type grow \
+        --transition-duration 2 \
+        --transition-fps 60 </dev/null >/dev/null 2>&1 & disown
+        
+    setsid uwsm-app -- matugen "${current_flags[@]}" image "$full_path" </dev/null >/dev/null 2>&1 & disown
+else
+    rm -f "$CACHE_FILE" "$PATH_MAP"
+    notify-send -a "Wallpaper Menu" "Path resolution failed. Cache cleared." -u critical
 fi
