@@ -14,6 +14,7 @@
 		"memory",
 		"custom/left_div#4",
 		"cpu",
+		"custom/notifications",
 		"custom/left_inv#1",
 		"custom/left_div#5",
 		"custom/distro",
@@ -52,11 +53,20 @@
 	"group/user": {
 		"orientation": "horizontal",
 		"modules": [
-			"custom/trigger"
+			"custom/trigger",
+			"tray"
 		],
 		"drawer": {
-			"transition-left-to-right": false
+			"transition-duration": 300,
+			"transition-left-to-right": true,
+			"click-to-reveal": false
 		}
+	},
+
+	"tray": {
+		"icon-size": 15,
+		"spacing": 6,
+		"show-passive-items": true
 	},
 
 	"custom/trigger": {
@@ -99,14 +109,14 @@
 		"thermal-zone": 1,
 		"critical-threshold": 90,
 		"interval": 10,
-		"format-critical": "󰀦 {temperatureC}°C",
-		"format": "{icon} {temperatureC}°C",
+		"format-critical": "󰀦 {temperatureF}°F",
+		"format": "{icon} {temperatureF}°F",
 		"format-icons": [
 			"󱃃", "󰔏", "󱃂"
 		],
 		"min-length": 8,
 		"max-length": 8,
-		"tooltip-format": "Fahrenheit: {temperatureF}°F"
+		"tooltip-format": "Celsius: {temperatureC}°C"
 	},
 
 	"memory": {
@@ -128,8 +138,8 @@
 		"format": "󰍛 {usage}%",
 		"format-warning": "󰀨 {usage}%",
 		"format-critical": "󰀨 {usage}%",
-		"min-length": 7,
-		"max-length": 7,
+		"min-length": 5,
+		"max-length": 5,
 		"states": {
 			"warning": 75,
 			"critical": 90
@@ -139,7 +149,8 @@
 
 	"custom/distro": {
 		"format": "󰣇",
-		"tooltip": false
+		"on-click": "rofi -show drun",
+		"tooltip-format": "Application Launcher"
 	},
 
 	"idle_inhibitor": {
@@ -156,14 +167,38 @@
 	},
 
 	"clock#time": {
-		"format": "{:%H:%M}",
+		"format": "{:%I:%M}",
 		"min-length": 5,
 		"max-length": 5,
 		"tooltip-format": "<b>Standard Time</b>: <span text_transform='lowercase'>{:%I:%M %p}</span>"
 	},
+	
+	"custom/notifications": {
+                "tooltip": true,
+                "tooltip-format": "Left Click: Launch SwayNC\n Right Click: Do Not Disturb",
+                "format": "{icon}",
+                "format-icons": {
+                	"notification": "",
+                	"none": "",
+                	"dnd-notification": "",
+                	"dnd-none": "",
+                	"inhibited-notification": "",
+                	"inhibited-none": "",
+                	"dnd-inhibited-notification": "",
+                	"dnd-inhibited-none": ""
+                },
+                "return-type": "json",
+                "exec-if": "which swaync-client",
+                "exec": "swaync-client -swb",
+                "on-click": "sleep 0.1 && swaync-client -t -sw",
+                "on-click-right": "swaync-client -d -sw",
+                "escape": true,
+                "min-length": 3,
+                "max-length": 3,
+        },
 
 	"clock#date": {
-		"format": "󰸗 {:%d-%m}",
+		"format": "󰸗 {:%m-%d}",
 		"min-length": 8,
 		"max-length": 8,
 		"tooltip-format": "{calendar}",
@@ -194,8 +229,8 @@
 		],
 		"min-length": 2,
 		"max-length": 2,
-		"on-click": "kitty -e ~/.config/waybar/scripts/network",
-		"on-click-right": "~/.config/waybar/scripts/network off",
+		"on-click": "uwsm-app -- kitty --class wifitui -e wifitui",
+		"on-click-right": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
 		"tooltip-format": "<b>Gateway</b>: {gwaddr}",
 		"tooltip-format-ethernet": "<b>Interface</b>: {ifname}",
 		"tooltip-format-wifi": "<b>Network</b>: {essid}\n<b>IP Addr</b>: {ipaddr}/{cidr}\n<b>Strength</b>: {signalStrength}%\n<b>Frequency</b>: {frequency} GHz",
@@ -211,8 +246,8 @@
 		"format-connected": "󰂱",
 		"min-length": 2,
 		"max-length": 2,
-		"on-click": "kitty -e ~/.config/waybar/scripts/bluetooth",
-		"on-click-right": "~/.config/waybar/scripts/bluetooth off",
+		"on-click": "uwsm-app -- blueman-manager",
+		"on-click-right": "uwsm-app -- kitty --class bluetui -e bluetui",
 		"tooltip-format": "Device Addr: {device_address}",
 		"tooltip-format-disabled": "Bluetooth Disabled",
 		"tooltip-format-off": "Bluetooth Off",
@@ -224,15 +259,16 @@
 	},
 
 	"custom/update": {
-		"exec": "~/.config/waybar/scripts/update module",
+		"format": "󰏔 {}",
+		"exec": "checkupdates 2>/dev/null | wc -l || echo 0",
 		"return-type": "json",
 		"interval": 3600,
 		"signal": 1,
-		"format": "{}",
 		"min-length": 2,
 		"max-length": 2,
-		"on-click": "kitty -e ~/.config/waybar/scripts/update",
-		"on-click-right": "pkill -RTMIN+1 waybar"
+		"on-click": "kitty sh -c 'command -v yay >/dev/null && yay || paru'",
+		"on-click-right": "pkill -RTMIN+1 waybar",
+		"tooltip-format": "System Updates"
 	},
 
 	"mpris": {
@@ -273,10 +309,12 @@
 		},
 		"min-length": 7,
 		"max-length": 7,
-		"on-click": "~/.config/waybar/scripts/volume output mute",
-		"on-scroll-up": "~/.config/waybar/scripts/volume output raise",
-		"on-scroll-down": "~/.config/waybar/scripts/volume output lower",
-		"tooltip-format": "<b>Output Device</b>: {desc}"
+		"on-click": "uwsm-app -- pavucontrol",
+		"on-click-right": "uwsm-app -- kitty --class cava -e cava",
+		"on-click-middle": "swayosd-client --output-volume mute-toggle",
+		"on-scroll-up": "swayosd-client --output-volume raise",
+		"on-scroll-down": "swayosd-client --output-volume lower",
+		"tooltip-format": "<b>Output Device</b>: {desc}\n\nLMB: Pavucontrol\nRMB: Cava\nMMB: Mute Toggle\nScroll: Volume"
 	},
 
 	"pulseaudio#input": {
@@ -285,9 +323,9 @@
 		"format-source-muted": "󰍭 {volume}%",
 		"min-length": 7,
 		"max-length": 7,
-		"on-click": "~/.config/waybar/scripts/volume input mute",
-		"on-scroll-up": "~/.config/waybar/scripts/volume input raise",
-		"on-scroll-down": "~/.config/waybar/scripts/volume input lower",
+		"on-click": "swayosd-client --input-volume mute-toggle",
+		"on-scroll-up": "swayosd-client --input-volume raise",
+		"on-scroll-down": "swayosd-client --input-volume lower",
 		"tooltip-format": "<b>Input Device</b>: {desc}"
 	},
 
@@ -298,8 +336,10 @@
 		],
 		"min-length": 7,
 		"max-length": 7,
-		"on-scroll-up": "~/.config/waybar/scripts/backlight up",
-		"on-scroll-down": "~/.config/waybar/scripts/backlight down",
+		"on-click": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
+		"on-click-right": "uwsm-app -- ~/user_scripts/sliders/dusky_sliders.py",
+		"on-scroll-up": "swayosd-client --brightness raise",
+		"on-scroll-down": "swayosd-client --brightness lower",
 		"tooltip": false
 	},
 
@@ -326,8 +366,8 @@
 	},
 
 	"custom/power": {
-		"format": "󰤼",
-		"on-click": "kitty -e ~/.config/waybar/scripts/power",
+		"format": "󰤄",
+		"on-click": "uwsm-app -- ~/user_scripts/wlogout/wlogout_scale.sh",
 		"tooltip-format": "Power Menu"
 	},
 
