@@ -8,7 +8,7 @@
 
 # Group 1: Graphics & Drivers
 pkgs_graphics=(
-  "intel-media-driver" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "acpi_call-dkms"
+  "intel-media-driver" "vpl-gpu-rt" "mesa" "vulkan-intel" "mesa-utils" "intel-gpu-tools" "libva" "libva-utils" "vulkan-icd-loader" "vulkan-tools" "sof-firmware" "linux-firmware" "acpi_call-dkms"
 )
 
 # Group 2: Hyprland Core
