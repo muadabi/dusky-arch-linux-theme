@@ -7,6 +7,7 @@
 		"hyprland/window"
 	],
 	"modules-center": [
+//		Commented out bc it makes the waybar asymmetrical
 //		"hyprland/language",
 		"custom/left_div#2",
 		"temperature",
@@ -27,11 +28,13 @@
 		"custom/right_div#4",
 		"network",
 		"bluetooth",
-		"custom/update",
 		"custom/right_div#5"
+//		Commented out bc it makes the waybar asymmetrical
+//		"custom/update"
 	],
 	"modules-right": [
-		"mpris",
+		"custom/cava",
+		"group/mpris-drawer",
 		"custom/left_div#6",
 		"group/pulseaudio",
 		"custom/left_div#7",
@@ -102,7 +105,9 @@
 	},
 
 	"hyprland/language": {
-		"format-en": " en"
+		"format-en": "en",
+		"min-length": 3,
+		"max-length": 3
 	},
 
 	"temperature": {
@@ -261,14 +266,35 @@
 	"custom/update": {
 		"format": "󰏔 {}",
 		"exec": "checkupdates 2>/dev/null | wc -l || echo 0",
-		"return-type": "json",
 		"interval": 3600,
 		"signal": 1,
-		"min-length": 2,
-		"max-length": 2,
+		"min-length": 3,
+		"max-length": 3,
 		"on-click": "kitty sh -c 'command -v yay >/dev/null && yay || paru'",
 		"on-click-right": "pkill -RTMIN+1 waybar",
 		"tooltip-format": "System Updates"
+	},
+
+	"custom/cava": {
+		"format": "{}",
+		"exec": "$HOME/user_scripts/waybar/cava.sh --8 --clean",
+		"spacing": 2
+	},
+
+	"group/mpris-drawer": {
+		"orientation": "inherit",
+		"drawer": {
+			"transition-duration": 800,
+			"children-class": "mpris-drawer",
+			"click-to-reveal": false,
+			"transition-left-to-right": false
+		},
+		"modules": ["custom/mpris-trigger", "mpris"]
+	},
+
+	"custom/mpris-trigger": {
+		"format": "♪",
+		"tooltip": false
 	},
 
 	"mpris": {
