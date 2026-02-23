@@ -173,6 +173,7 @@ class ItemProperties(TypedDict, total=False):
     default: float
     debounce: bool
     options: list[str]
+    options_map: dict[str, str]
     placeholder: str
     path: str  # For directory generator
     sort: str  # For directory generator

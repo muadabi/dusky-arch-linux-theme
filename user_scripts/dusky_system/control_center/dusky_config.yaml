@@ -1067,6 +1067,9 @@ pages:
         options:
         - RAM
         - Disk
+        options_map:
+          "false": "RAM"
+          "true": "Disk"
       on_change:
         RAM:
           type: exec
@@ -1085,6 +1088,9 @@ pages:
         options:
         - Terminal
         - Rofi
+        options_map:
+          "False": "Rofi"
+          "True": "Terminal"
       on_change:
         Terminal:
           type: exec

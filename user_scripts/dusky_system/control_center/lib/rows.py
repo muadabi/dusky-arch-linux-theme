@@ -215,6 +215,7 @@ class RowProperties(TypedDict, total=False):
     default: float
     debounce: bool
     options: list[str]
+    options_map: dict[str, str]
     options_command: str
     placeholder: str
     badge_file: str
@@ -1191,6 +1192,10 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
             self.options_list = [str(x) for x in raw_options]
             self.set_model(Gtk.StringList.new(self.options_list))
 
+        raw_map = properties.get("options_map", {})
+        self.options_map = {str(k).lower(): str(v) for k, v in raw_map.items()}
+        self.reverse_map = {str(v): str(k) for k, v in raw_map.items()}
+
         self.connect("notify::selected", self._on_selected)
         self.connect("map", self._on_map)
 
@@ -1202,9 +1207,11 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
 
         if key := properties.get("key"):
             val = utility.load_setting(str(key).strip(), default="")
-            if val and str(val) in self.options_list:
+            val_lower = str(val).lower()
+            mapped_val = self.options_map.get(val_lower, str(val))
+            if mapped_val and mapped_val in self.options_list:
                 with self._suppress_change_signal():
-                    self.set_selected(self.options_list.index(str(val)))
+                    self.set_selected(self.options_list.index(mapped_val))
 
         if properties.get("value_command") or properties.get("key"):
             self._start_selection_monitor()
@@ -1273,7 +1280,9 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
         if key := self.properties.get("key"):
             try:
                 val = utility.load_setting(str(key).strip(), default="")
-                if val: GLib.idle_add(self._update_selection_ui, str(val))
+                val_lower = str(val).lower()
+                mapped_val = self.options_map.get(val_lower, str(val))
+                if mapped_val: GLib.idle_add(self._update_selection_ui, mapped_val)
             except Exception: pass
             return
 
@@ -1310,7 +1319,9 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
         # Offload file I/O to thread pool
         if key := self.properties.get("key"):
             key_str = str(key).strip()
-            _submit_task_safe(lambda: utility.save_setting(key_str, item), self._state)
+            write_val = self.reverse_map.get(item, item)
+
+            _submit_task_safe(lambda: utility.save_setting(key_str, write_val), self._state)
 
         if isinstance(self.on_action, dict):
             action = self.on_action.get(item)
