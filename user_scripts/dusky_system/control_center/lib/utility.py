@@ -191,7 +191,7 @@ def load_config(config_path: Path) -> dict[str, object]:
 def execute_command(cmd_string: str, title: str, run_in_terminal: bool) -> bool:
     """
     Execute a command via UWSM (Universal Wayland Session Manager).
-    Detaches process to prevent zombies.
+    Detaches process natively via GLib to prevent zombies and Python GC locks.
     """
     if not cmd_string or not cmd_string.strip():
         return False
@@ -207,25 +207,28 @@ def execute_command(cmd_string: str, title: str, run_in_terminal: bool) -> bool:
         log.error("Failed to parse command: %r", cmd_string)
         return False
 
+    # Local import is MANDATORY here. utility.py is parsed before gi.require_version 
+    # is called in the main executable. Importing globally would trigger a fatal GTK crash.
+    from gi.repository import GLib
+
     try:
-        # start_new_session=True fully detaches the process
-        subprocess.Popen(
+        # GLib.spawn_async bypasses Python's fork() locks and automatically 
+        # attaches a child watch to reap the process immediately upon exit.
+        # SEARCH_PATH behaves like shell=True for locating binaries in $PATH.
+        success, _pid = GLib.spawn_async(
             full_cmd,
-            start_new_session=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
+            flags=GLib.SpawnFlags.SEARCH_PATH,
         )
-        return True
-    except FileNotFoundError:
+        return success
+    except GLib.Error as e:
         log.error(
-            "Executable not found: %r. Ensure 'uwsm-app' is installed.",
-            full_cmd[0] if full_cmd else "unknown"
+            "Executable failed or not found: %r. Ensure 'uwsm-app' is installed. (GLib Error: %s)",
+            full_cmd[0] if full_cmd else "unknown",
+            e.message
         )
         return False
-    except OSError as e:
-        log.error("OS Error executing %r: %s", cmd_string, e)
+    except Exception as e:
+        log.error("Unexpected error executing %r: %s", cmd_string, e)
         return False
 
 

@@ -61,7 +61,9 @@ SUBPROCESS_TIMEOUT_SHORT: Final[int] = 2
 SUBPROCESS_TIMEOUT_LONG: Final[int] = 5
 ICON_PIXEL_SIZE: Final[int] = 28
 LABEL_MAX_WIDTH_CHARS: Final[int] = 16
-EXECUTOR_MAX_WORKERS: Final[int] = 4
+
+# Bumped to 12 to prevent thread starvation on map storms
+EXECUTOR_MAX_WORKERS: Final[int] = 12
 
 LABEL_PLACEHOLDER: Final[str] = "..."
 LABEL_NA: Final[str] = "N/A"
@@ -894,8 +896,10 @@ class ToggleRow(StateMonitorMixin, BaseActionRow):
                 if isinstance(action, dict) and (cmd := action.get("command")):
                     utility.execute_command(str(cmd).strip(), "Toggle", bool(action.get("terminal", False)))
 
+        # Offload file I/O to thread pool to prevent main thread blocking
         if key := self.properties.get("key"):
-            utility.save_setting(str(key).strip(), state)
+            key_str = str(key).strip()
+            _submit_task_safe(lambda: utility.save_setting(key_str, state), self._state)
 
         return False
 
@@ -919,16 +923,41 @@ class LabelRow(BaseActionRow):
         self.value_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.add_suffix(self.value_label)
 
-        self._trigger_update()
-
         interval = _safe_int(properties.get("interval"), 0)
-        if interval > 0:
-            with self._state.lock:
-                if not self._state.is_destroyed:
-                    # LabelRow uses the 'value' slot for updates
-                    self._state.value.source_id = GLib.timeout_add_seconds(
-                        interval, self._on_timeout
-                    )
+        
+        # Optimization: Route repetitive shell execs to the native Gio async engine
+        # to strictly avoid thread pool starvation.
+        is_exec = isinstance(self.value_config, dict) and self.value_config.get("type") == "exec"
+        
+        if is_exec and interval > 0:
+            val_dict = self.value_config
+            cmd = ""
+            if isinstance(val_dict, dict):
+                cmd = str(val_dict.get("command", "")).strip()
+                
+            if cmd:
+                self._start_poll_loop(
+                    self._state.value,
+                    cmd,
+                    interval,
+                    on_output=self._handle_async_output,
+                    timeout=SUBPROCESS_TIMEOUT_LONG,
+                )
+            else:
+                self._update_label(LABEL_NA)
+        else:
+            self._trigger_update()
+            if interval > 0:
+                with self._state.lock:
+                    if not self._state.is_destroyed:
+                        # LabelRow uses the 'value' slot for updates
+                        self._state.value.source_id = GLib.timeout_add_seconds(
+                            interval, self._on_timeout
+                        )
+
+    def _handle_async_output(self, output: str) -> None:
+        """Callback for Gio async loop execution."""
+        self._update_label(output.strip() if output else LABEL_NA)
 
     def _on_timeout(self) -> bool:
         if isinstance(self, Gtk.Widget) and not self.get_mapped():
@@ -1278,8 +1307,10 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
         if idx >= model.get_n_items(): return
         item = model.get_string(idx)
 
+        # Offload file I/O to thread pool
         if key := self.properties.get("key"):
-            utility.save_setting(str(key).strip(), item)
+            key_str = str(key).strip()
+            _submit_task_safe(lambda: utility.save_setting(key_str, item), self._state)
 
         if isinstance(self.on_action, dict):
             action = self.on_action.get(item)
@@ -1666,6 +1697,10 @@ class GridToggleCard(DynamicIconMixin, StateMonitorMixin, GridCardBase):
             if act := self.on_action.get(action_key):
                 if isinstance(act, dict) and (cmd := act.get("command")):
                     utility.execute_command(str(cmd).strip(), "Toggle", bool(act.get("terminal", False)))
+        
+        # Offload file I/O to thread pool
         if key := self.properties.get("key"):
-            utility.save_setting(str(key).strip(), new_state)
+            key_str = str(key).strip()
+            _submit_task_safe(lambda: utility.save_setting(key_str, new_state), self._state)
+            
         return False
