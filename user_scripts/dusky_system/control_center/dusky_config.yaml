@@ -93,15 +93,21 @@ pages:
         title: Active Profile
         description: Select performance mode
         icon: power-profile-balanced-symbolic
+        key: power_profile_state
         options:
         - Balanced
         - Performance
         - Power Saver
-        value_command: "tlpctl get | sed 's/balanced/Balanced/;s/performance/Performance/;s/power-saver/Power Saver/'"
-        interval: 5
       on_change:
-        type: exec
-        command: "tlpctl $(echo '{value}' | tr '[:upper:]' '[:lower:]' | sed 's/ /-/g') && notify-send 'Power Profile' 'Switched to {value}'"
+        Balanced:
+          type: exec
+          command: tlpctl balanced && notify-send 'Power Profile' 'Switched to Balanced'
+        Performance:
+          type: exec
+          command: tlpctl performance && notify-send 'Power Profile' 'Switched to Performance'
+        Power Saver:
+          type: exec
+          command: tlpctl power-saver && notify-send 'Power Profile' 'Switched to Power Saver'
 
   - type: section
     properties:
@@ -156,8 +162,8 @@ pages:
         title: Memory Used
         interval: 5
       value:
-        type: exec
-        command: free -h | awk '/^Mem:/ {print $3}'
+        type: system
+        key: memory_used
 
 - id: system
   title: System
@@ -442,14 +448,17 @@ pages:
         title: File Manager Switch
         description: 'Choose Default: Thunar (GUI) vs Yazi (TUI)'
         icon: system-file-manager-symbolic
+        key: filemanager_switch
         options:
           - Yazi
           - Thunar
-        value_command: "grep -q 'true' ~/.config/dusky/settings/filemanager_switch 2>/dev/null && echo 'Yazi' || echo 'Thunar'"
-        interval: 5
       on_change:
-        type: exec
-        command: "kitty --class 235_file_manager_switch.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --$(echo '{value}' | awk '{print tolower($0)}')\""
+        Yazi:
+          type: exec
+          command: kitty --class 235_file_manager_switch.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --yazi"
+        Thunar:
+          type: exec
+          command: kitty --class 235_file_manager_switch.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/235_file_manager_switch.sh --thunar"
   - type: section
     properties:
       title: File Transfer (FTP)
@@ -624,15 +633,21 @@ pages:
         title: Active Profile
         description: Select performance mode
         icon: power-profile-balanced-symbolic
+        key: power_profile_state
         options:
         - Balanced
         - Performance
         - Power Saver
-        value_command: "tlpctl get | sed 's/balanced/Balanced/;s/performance/Performance/;s/power-saver/Power Saver/'"
-        interval: 5
       on_change:
-        type: exec
-        command: "tlpctl $(echo '{value}' | tr '[:upper:]' '[:lower:]' | sed 's/ /-/g') && notify-send 'Power Profile' 'Switched to {value}'"
+        Balanced:
+          type: exec
+          command: tlpctl balanced && notify-send 'Power Profile' 'Switched to Balanced'
+        Performance:
+          type: exec
+          command: tlpctl performance && notify-send 'Power Profile' 'Switched to Performance'
+        Power Saver:
+          type: exec
+          command: tlpctl power-saver && notify-send 'Power Profile' 'Switched to Power Saver'
     - type: toggle
       properties:
         title: Dusky Power Saver

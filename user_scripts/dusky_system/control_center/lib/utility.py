@@ -322,7 +322,9 @@ def preflight_check() -> None:
 # SYSTEM VALUE RETRIEVAL
 # =============================================================================
 def get_system_value(key: str) -> str:
-    """Get a system info value (cached lifetime)."""
+    """Get a system info value (bypasses cache for dynamic stats like memory)."""
+    if key in {"memory_used"}:
+        return _compute_system_value(key)
     return _system_info_cache.get_or_compute(key, lambda: _compute_system_value(key))
 
 
@@ -331,6 +333,8 @@ def _compute_system_value(key: str) -> str:
     match key:
         case "memory_total":
             return _get_memory_total()
+        case "memory_used":
+            return _get_memory_used()
         case "cpu_model":
             return _get_cpu_model()
         case "gpu_model":
@@ -351,6 +355,25 @@ def _get_memory_total() -> str:
                     kb = int(parts[1])
                     gb = round(kb / 1_048_576, 1)
                     return f"{gb} GB"
+    except (OSError, ValueError, IndexError):
+        pass
+    return LABEL_NA
+
+
+def _get_memory_used() -> str:
+    try:
+        content = Path("/proc/meminfo").read_text(encoding="utf-8")
+        mem_total = 0
+        mem_available = 0
+        for line in content.splitlines():
+            if line.startswith("MemTotal:"):
+                mem_total = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                mem_available = int(line.split()[1])
+        if mem_total and mem_available:
+            used_kb = mem_total - mem_available
+            used_gb = round(used_kb / 1_048_576, 1)
+            return f"{used_gb} GB"
     except (OSError, ValueError, IndexError):
         pass
     return LABEL_NA
@@ -421,15 +444,14 @@ def _validate_settings_path(key: str) -> Path | None:
         return None
 
 
-def save_setting(
-    key: str, value: bool | int | float | str, *, as_int: bool = False
-) -> bool:
+def save_setting(key: str, value: bool | int | float | str) -> bool:
     """Atomic write to disk (Temp File -> Fsync -> Rename)."""
     target = _validate_settings_path(key)
     if target is None:
         return False
 
-    content = ("1" if value else "0") if (as_int and isinstance(value, bool)) else str(value)
+    # Force all booleans to True/False strings. No more 1/0 conversions.
+    content = str(value)
 
     temp_fd: int | None = None
     temp_path: Path | None = None
@@ -471,21 +493,19 @@ def save_setting(
 
 
 @overload
-def load_setting(key: str, default: bool, *, is_inversed: bool = False) -> bool: ...
+def load_setting(key: str, default: bool) -> bool: ...
 @overload
-def load_setting(key: str, default: int, *, is_inversed: bool = False) -> int: ...
+def load_setting(key: str, default: int) -> int: ...
 @overload
-def load_setting(key: str, default: float, *, is_inversed: bool = False) -> float: ...
+def load_setting(key: str, default: float) -> float: ...
 @overload
-def load_setting(key: str, default: str, *, is_inversed: bool = False) -> str: ...
+def load_setting(key: str, default: str) -> str: ...
 @overload
-def load_setting(key: str, default: None = None, *, is_inversed: bool = False) -> str | None: ...
+def load_setting(key: str, default: None = None) -> str | None: ...
 
 def load_setting(
     key: str,
     default: bool | int | float | str | None = None,
-    *,
-    is_inversed: bool = False,
 ) -> bool | int | float | str | None:
     """Load setting with automatic type coercion based on default value."""
     target = _validate_settings_path(key)
@@ -499,7 +519,7 @@ def load_setting(
 
     try:
         match default:
-            case bool(): return _parse_bool(raw, is_inversed)
+            case bool(): return _parse_bool(raw)
             case int(): return int(raw)
             case float(): return float(raw)
             case _: return raw
@@ -507,19 +527,10 @@ def load_setting(
         return default
 
 
-def _parse_bool(value: str, is_inversed: bool) -> bool:
+def _parse_bool(value: str) -> bool:
     """Robust boolean parsing."""
     lowered = value.lower().strip()
-    if lowered in {"true", "yes", "on", "1"}:
-        res = True
-    elif lowered in {"false", "no", "off", "0", ""}:
-        res = False
-    else:
-        try:
-            res = (int(value) != 0) if len(value) < 20 else False
-        except ValueError:
-            res = False
-    return res ^ is_inversed
+    return lowered in {"true", "yes", "on", "1"}
 
 
 # =============================================================================

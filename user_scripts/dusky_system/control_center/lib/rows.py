@@ -6,6 +6,7 @@ Optimized for:
 - Efficiency: Gio.Subprocess async I/O eliminates thread pool overhead for shell commands.
 - Type Safety: Strict TypedDict definitions and runtime-checkable Protocols.
 - Architecture: Unified AsyncPollingMixin eliminates boilerplate and ensures consistent lifecycle management.
+- Performance: Native Linux inotify (Gio.FileMonitor) eliminates idle polling for state files.
 
 GTK4/Libadwaita compatible with proper lifecycle management via `do_unroot`.
 """
@@ -75,7 +76,6 @@ TRUE_VALUES: Final[frozenset[str]] = frozenset(
 
 # Shell metacharacters that mandate /bin/sh -c interpretation.
 # Quotes (' ") are intentionally excluded: shlex.split() handles them.
-# FIX APPLIED: Added '=' to ensure environment variable assignments trigger shell execution.
 _SHELL_METACHAR: Final[frozenset[str]] = frozenset('|&;<>()$`\\*?#~![]{}=\n')
 
 
@@ -205,8 +205,6 @@ class RowProperties(TypedDict, total=False):
     style_map: dict[str, str]
     interval: int
     key: str
-    key_inverse: bool
-    save_as_int: bool
     state_command: str
     value_command: str
     min: float
@@ -275,10 +273,13 @@ class WidgetState:
             
             # Cancel all in-flight Gio.Subprocess operations across all slots
             for slot in self._slots:
-                if slot.cancellable is not None:
+                if isinstance(slot.cancellable, Gio.FileMonitor):
                     with suppress(Exception):
                         slot.cancellable.cancel()
-                    slot.cancellable = None
+                elif slot.cancellable is not None:
+                    with suppress(Exception):
+                        slot.cancellable.cancel()
+                slot.cancellable = None
             
             # Harvest source IDs
             sources: list[int] = []
@@ -305,7 +306,6 @@ class DynamicIconHost(Protocol):
 class StateMonitorHost(Protocol):
     _state: WidgetState
     properties: RowProperties
-    key_inverse: bool
 
 
 # =============================================================================
@@ -595,9 +595,8 @@ class DynamicIconMixin(AsyncPollingMixin):
 
 
 class StateMonitorMixin(AsyncPollingMixin):
-    """Mixin providing external state monitoring via periodic polling."""
+    """Mixin providing external state monitoring via native inotify or polling."""
     properties: RowProperties
-    key_inverse: bool
 
     def _start_state_monitor(self) -> None:
         has_key = bool(self.properties.get("key", ""))
@@ -607,10 +606,9 @@ class StateMonitorMixin(AsyncPollingMixin):
         if not has_key and not has_state_cmd:
             return
 
-        interval = _safe_int(self.properties.get("interval"), MONITOR_INTERVAL_SECONDS)
-
         if has_state_cmd:
-            # Use Async Polling Engine for commands
+            # Command based states still require polling
+            interval = _safe_int(self.properties.get("interval"), MONITOR_INTERVAL_SECONDS)
             self._start_poll_loop(
                 self._state.monitor,
                 state_cmd.strip(),
@@ -620,58 +618,35 @@ class StateMonitorMixin(AsyncPollingMixin):
                 immediate=False,
             )
         else:
-            # Use Manual Thread Pool for file I/O (Legacy support)
-            with self._state.lock:
-                if self._state.is_destroyed:
-                    return
-                self._state.monitor.source_id = GLib.timeout_add_seconds(
-                    interval, self._monitor_state_tick_file
-                )
+            # Native Linux inotify event listener (Zero CPU idle)
+            key = str(self.properties.get("key", "")).strip()
+            file_path = utility.SETTINGS_DIR / key
+            try:
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                if not file_path.exists():
+                    file_path.touch()
+                
+                gfile = Gio.File.new_for_path(str(file_path))
+                monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
+                monitor.connect("changed", self._on_file_changed)
+                
+                with self._state.lock:
+                    self._state.monitor.cancellable = monitor
+            except Exception as e:
+                log.error(f"File monitor setup failed for {key}: {e}")
 
     def _handle_state_output(self, output: str) -> None:
         new_state = output.lower() in TRUE_VALUES
         self._apply_state_update(new_state)
 
-    def _monitor_state_tick_file(self) -> bool:
-        """Legacy tick for file-based monitoring (blocking I/O)."""
+    def _on_file_changed(self, monitor: Gio.FileMonitor, file: Gio.File, other_file: Gio.File | None, event_type: Gio.FileMonitorEvent) -> None:
         if isinstance(self, Gtk.Widget) and not self.get_mapped():
-            return GLib.SOURCE_CONTINUE
-
-        with self._state.lock:
-            if self._state.is_destroyed:
-                return GLib.SOURCE_REMOVE
-            # Use the monitor slot's running flag to guard thread pool submission
-            if self._state.monitor.is_running:
-                return GLib.SOURCE_CONTINUE
-            self._state.monitor.is_running = True
-
-        if not _submit_task_safe(self._check_state_via_settings, self._state):
-            with self._state.lock:
-                self._state.monitor.is_running = False
-
-        return GLib.SOURCE_CONTINUE
-
-    def _check_state_via_settings(self) -> None:
-        new_state: bool | None = None
-        try:
-            with self._state.lock:
-                if self._state.is_destroyed: return
-            
-            key = self.properties.get("key", "")
-            if isinstance(key, str) and key.strip():
-                val = utility.load_setting(
-                    key.strip(), default=False, is_inversed=self.key_inverse
-                )
-                if isinstance(val, bool):
-                    new_state = val
-        except Exception:
-            pass
-        finally:
-            with self._state.lock:
-                self._state.monitor.is_running = False
-
-        if new_state is not None:
-            GLib.idle_add(self._apply_state_update, new_state)
+            return
+        if event_type in (Gio.FileMonitorEvent.CHANGES_DONE_HINT, Gio.FileMonitorEvent.CREATED):
+            key = str(self.properties.get("key", "")).strip()
+            val = utility.load_setting(key, default=False)
+            if isinstance(val, bool):
+                GLib.idle_add(self._apply_state_update, val)
 
     def _apply_state_update(self, new_state: bool) -> bool:
         raise NotImplementedError
@@ -881,17 +856,13 @@ class ToggleRow(StateMonitorMixin, BaseActionRow):
     ) -> None:
         super().__init__(properties, on_toggle, context)
 
-        self.save_as_int = bool(properties.get("save_as_int", False))
-        self.key_inverse = bool(properties.get("key_inverse", False))
         self._programmatic_update_event = threading.Event()
 
         self.toggle_switch = Gtk.Switch()
         self.toggle_switch.set_valign(Gtk.Align.CENTER)
 
         if key := properties.get("key"):
-            val = utility.load_setting(
-                str(key).strip(), default=False, is_inversed=self.key_inverse
-            )
+            val = utility.load_setting(str(key).strip(), default=False)
             if isinstance(val, bool):
                 self.toggle_switch.set_active(val)
 
@@ -924,7 +895,7 @@ class ToggleRow(StateMonitorMixin, BaseActionRow):
                     utility.execute_command(str(cmd).strip(), "Toggle", bool(action.get("terminal", False)))
 
         if key := self.properties.get("key"):
-            utility.save_setting(str(key).strip(), state ^ self.key_inverse, as_int=self.save_as_int)
+            utility.save_setting(str(key).strip(), state)
 
         return False
 
@@ -1651,8 +1622,6 @@ class GridToggleCard(DynamicIconMixin, StateMonitorMixin, GridCardBase):
     ) -> None:
         super().__init__(properties, on_toggle, context)
 
-        self.save_as_int = bool(properties.get("save_as_int", False))
-        self.key_inverse = bool(properties.get("key_inverse", False))
         self.is_active = False
 
         icon_conf = properties.get("icon", DEFAULT_ICON)
@@ -1666,9 +1635,7 @@ class GridToggleCard(DynamicIconMixin, StateMonitorMixin, GridCardBase):
         self.set_child(box)
 
         if key := properties.get("key"):
-            val = utility.load_setting(
-                str(key).strip(), default=False, is_inversed=self.key_inverse
-            )
+            val = utility.load_setting(str(key).strip(), default=False)
             if isinstance(val, bool):
                 self._set_visual(val)
 
@@ -1700,5 +1667,5 @@ class GridToggleCard(DynamicIconMixin, StateMonitorMixin, GridCardBase):
                 if isinstance(act, dict) and (cmd := act.get("command")):
                     utility.execute_command(str(cmd).strip(), "Toggle", bool(act.get("terminal", False)))
         if key := self.properties.get("key"):
-            utility.save_setting(str(key).strip(), new_state ^ self.key_inverse, as_int=self.save_as_int)
+            utility.save_setting(str(key).strip(), new_state)
         return False
