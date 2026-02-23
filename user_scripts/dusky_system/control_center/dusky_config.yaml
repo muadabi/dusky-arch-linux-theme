@@ -1048,27 +1048,37 @@ pages:
         title: Clipboard Persistence
         description: Configure clipboard history storage
         icon: edit-paste-symbolic
+        key: clipboard_persistance
         options:
         - RAM
         - Disk
-        value_command: "grep -q 'True' ~/.config/dusky/settings/clipboard_persistance 2>/dev/null && echo 'Disk' || echo 'RAM'"
-        interval: 5
       on_change:
-        type: exec
-        command: "kitty --class 390_clipboard_persistance.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/390_clipboard_persistance.sh --$(echo '{value}' | tr '[:upper:]' '[:lower:]')\""
-        terminal: false
+        RAM:
+          type: exec
+          command: kitty --class 390_clipboard_persistance.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/390_clipboard_persistance.sh --ram"
+          terminal: false
+        Disk:
+          type: exec
+          command: kitty --class 390_clipboard_persistance.sh --hold sh -c "$HOME/user_scripts/arch_setup_scripts/scripts/390_clipboard_persistance.sh --disk"
+          terminal: false
+          
     - type: selection
       properties:
         title: Clipboard Style
         icon: edit-paste-symbolic
+        key: clipboard_state
         options:
         - Terminal
         - Rofi
-        value_command: "grep -q 'True' ~/.config/dusky/settings/clipboard_state 2>/dev/null && echo 'Terminal' || echo 'Rofi'"
-        interval: 5
       on_change:
-        type: exec
-        command: "$HOME/user_scripts/arch_setup_scripts/scripts/460_switch_clipboard.sh --$(echo '{value}' | tr '[:upper:]' '[:lower:]')"
+        Terminal:
+          type: exec
+          command: $HOME/user_scripts/arch_setup_scripts/scripts/460_switch_clipboard.sh --terminal
+          terminal: false
+        Rofi:
+          type: exec
+          command: $HOME/user_scripts/arch_setup_scripts/scripts/460_switch_clipboard.sh --rofi
+          terminal: false
   - type: section
     properties:
       title: Memory & Optimization

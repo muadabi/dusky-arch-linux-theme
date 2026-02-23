@@ -1200,7 +1200,13 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
         if properties.get("options_command"):
             _submit_task_safe(self._fetch_options_async, self._state)
 
-        if properties.get("value_command"):
+        if key := properties.get("key"):
+            val = utility.load_setting(str(key).strip(), default="")
+            if val and str(val) in self.options_list:
+                with self._suppress_change_signal():
+                    self.set_selected(self.options_list.index(str(val)))
+
+        if properties.get("value_command") or properties.get("key"):
             self._start_selection_monitor()
 
     def _create_icon_widget(self, icon: object) -> Gtk.Image:
@@ -1264,6 +1270,13 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
         return GLib.SOURCE_CONTINUE
 
     def _fetch_selection_async(self) -> None:
+        if key := self.properties.get("key"):
+            try:
+                val = utility.load_setting(str(key).strip(), default="")
+                if val: GLib.idle_add(self._update_selection_ui, str(val))
+            except Exception: pass
+            return
+
         cmd = self.properties.get("value_command", "")
         if not cmd: return
         try:
@@ -1293,10 +1306,19 @@ class SelectionRow(DynamicIconMixin, Adw.ComboRow):
         idx = self.get_selected()
         if idx >= model.get_n_items(): return
         item = model.get_string(idx)
-        if isinstance(self.on_action, dict) and (cmd := self.on_action.get("command")):
-            safe_value = shlex.quote(item)
-            final_cmd = str(cmd).replace("{value}", safe_value)
-            utility.execute_command(final_cmd, "Selection", bool(self.on_action.get("terminal", False)))
+
+        if key := self.properties.get("key"):
+            utility.save_setting(str(key).strip(), item)
+
+        if isinstance(self.on_action, dict):
+            action = self.on_action.get(item)
+            if not isinstance(action, dict) and "command" in self.on_action:
+                action = self.on_action
+
+            if isinstance(action, dict) and (cmd := action.get("command")):
+                safe_value = shlex.quote(item)
+                final_cmd = str(cmd).replace("{value}", safe_value)
+                utility.execute_command(final_cmd, "Selection", bool(action.get("terminal", False)))
 
     def do_unroot(self) -> None:
         sources = self._state.mark_destroyed_and_get_sources()
