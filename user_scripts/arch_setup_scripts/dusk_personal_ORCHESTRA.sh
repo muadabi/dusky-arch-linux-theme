@@ -31,7 +31,6 @@ INSTALL_SEQUENCE=(
     "U | 015_set_thunar_terminal_kitty.sh"
     "U | 020_desktop_apps_username_setter.sh"
     "U | 025_configure_keyboard.sh"
-    "U | 030_uwsm_env_comment_everything.sh"
     "U | 035_configure_uwsm_gpu.sh"
     "U | 040_long_sleep_timeout.sh"
     "S | 045_battery_limiter.sh"

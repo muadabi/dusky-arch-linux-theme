@@ -1,0 +1,13 @@
+# -----------------------------------------------------------------
+# UWSM GPU Config | Mode: HYBRID | Wed Feb 25 12:14:24 AM IST 2026
+# -----------------------------------------------------------------
+export ELECTRON_OZONE_PLATFORM_HINT=auto
+export MOZ_ENABLE_WAYLAND=1
+
+# Hyprland GPU Priority (First = Compositor)
+export AQ_DRM_DEVICES="/dev/dri/card1:/dev/dri/card0"
+
+# --- Intel ---
+export LIBVA_DRIVER_NAME=iHD
+# --- NVIDIA (Secondary/Hybrid) ---
+# Env vars hidden to ensure Intel/AMD handles desktop session.
