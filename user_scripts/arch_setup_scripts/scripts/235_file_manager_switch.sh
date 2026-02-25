@@ -8,9 +8,9 @@
 #   Run without any arguments to launch the TUI. Requires an active TTY.
 #
 # Headless/Automation Flags (Strictly single-flag evaluation):
-#   --thunar       : Non-interactively updates keybinds.conf to use Thunar.
+#   --thunar       : Non-interactively updates configs to use Thunar.
 #                    Updates the Dusky state file to 'false'.
-#   --yazi         : Non-interactively updates keybinds.conf to use Yazi.
+#   --yazi         : Non-interactively updates configs to use Yazi.
 #                    Updates the Dusky state file to 'true'.
 #   --apply-state  : Non-interactively reads the Dusky state file at
 #                    ~/.config/dusky/settings/filemanager_switch.
@@ -29,9 +29,14 @@ shopt -s extglob
 # ▼ USER CONFIGURATION ▼
 # =============================================================================
 
-declare -r CONFIG_FILE="${HOME}/.config/hypr/source/keybinds.conf"
+# Path 1: Where the variable is defined ($fileManager = ...)
+declare -r APPS_CONFIG="${HOME}/.config/hypr/edit_here/source/default_apps.conf"
+
+# Path 2: Where the binds are located (bind = ... uwsm-app ...)
+declare -r BINDS_CONFIG="${HOME}/.config/hypr/source/keybinds.conf"
+
 declare -r APP_TITLE="File Manager Switcher"
-declare -r APP_VERSION="v1.0.0"
+declare -r APP_VERSION="v1.1.0"
 
 # Layout
 declare -ri BOX_INNER_WIDTH=48
@@ -45,7 +50,7 @@ declare -ri OPTION_COUNT=${#FM_OPTIONS[@]}
 
 # Post-write hook
 post_write_action() {
-    : # Hyprland auto-reloads keybinds.conf via source, no action needed
+    : # Hyprland auto-reloads confs via source, no action needed
 }
 
 # =============================================================================
@@ -94,7 +99,6 @@ log_err() {
 
 cleanup() {
     # Only try to restore TUI state if we actually initialized it (checked via ORIGINAL_STTY)
-    # This prevents printing junk escape sequences when running in CLI mode.
     if [[ -n "${ORIGINAL_STTY:-}" ]]; then
         printf '%s%s%s' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" 2>/dev/null || :
         stty "$ORIGINAL_STTY" 2>/dev/null || :
@@ -118,6 +122,9 @@ trap 'exit 143' TERM
 detect_current_fm() {
     CURRENT_FM=""
     local line
+    # We now read from APPS_CONFIG for the variable definition
+    if [[ ! -f "$APPS_CONFIG" ]]; then return 1; fi
+    
     while IFS= read -r line; do
         # Skip comments
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -130,7 +137,7 @@ detect_current_fm() {
             CURRENT_FM="$val"
             return 0
         fi
-    done < "$CONFIG_FILE"
+    done < "$APPS_CONFIG"
     return 1
 }
 
@@ -139,7 +146,7 @@ detect_current_fm() {
 write_fm_switch() {
     local target_fm="$1"
 
-    # Write state file for Dusky FIRST, so it triggers even if already set
+    # Write state file for Dusky FIRST
     mkdir -p "${HOME}/.config/dusky/settings"
     if [[ "$target_fm" == "yazi" ]]; then
         printf "true\n" > "${HOME}/.config/dusky/settings/filemanager_switch"
@@ -152,45 +159,62 @@ write_fm_switch() {
         return 0
     fi
 
-    if [[ -z "$_TMPFILE" ]]; then
-        _TMPFILE=$(mktemp "${CONFIG_FILE}.tmp.XXXXXXXXXX")
-    fi
-
     local old_fm="$CURRENT_FM"
     local new_fm="$target_fm"
 
-    # Atomic awk processing
+    # --- PHASE 1: Update APPS_CONFIG (Variable Definition) ---
+    _TMPFILE=$(mktemp "${APPS_CONFIG}.tmp.XXXXXXXXXX")
+    
     if ! LC_ALL=C awk -v old_fm="$old_fm" -v new_fm="$new_fm" '
     {
         line = $0
-
-        # 1. Replace the variable assignment
+        # Replace the variable assignment
         if (line ~ /\$fileManager[[:space:]]*=[[:space:]]*/ && line !~ /^[[:space:]]*#/) {
             sub(old_fm, new_fm, line)
         }
+        print line
+    }
+    ' "$APPS_CONFIG" > "$_TMPFILE"; then
+        rm -f "$_TMPFILE" 2>/dev/null || :
+        _TMPFILE=""
+        STATUS_MSG="${C_RED}Failed to write apps config.${C_RESET}"
+        return 1
+    fi
 
-        # 2. Adjust keybind exec line based on target
+    cat "$_TMPFILE" > "$APPS_CONFIG"
+    rm -f "$_TMPFILE"
+    _TMPFILE=""
+
+    # --- PHASE 2: Update BINDS_CONFIG (Keybind Logic) ---
+    _TMPFILE=$(mktemp "${BINDS_CONFIG}.tmp.XXXXXXXXXX")
+
+    if ! LC_ALL=C awk -v old_fm="$old_fm" -v new_fm="$new_fm" '
+    {
+        line = $0
+        # Adjust keybind exec line based on target
         if (line ~ /uwsm-app/ && line ~ /\$fileManager/ && line !~ /^[[:space:]]*#/) {
             if (new_fm == "thunar") {
+                # Switch to direct execution
                 gsub(/uwsm-app -- \$terminal -e \$fileManager/, "uwsm-app $fileManager", line)
             } else if (new_fm == "yazi") {
+                # Switch to terminal wrapper, but only if not already wrapped
                 if (line !~ /\$terminal -e/) {
                     gsub(/uwsm-app \$fileManager/, "uwsm-app -- $terminal -e $fileManager", line)
                 }
             }
         }
-
         print line
     }
-    ' "$CONFIG_FILE" > "$_TMPFILE"; then
+    ' "$BINDS_CONFIG" > "$_TMPFILE"; then
         rm -f "$_TMPFILE" 2>/dev/null || :
         _TMPFILE=""
-        STATUS_MSG="${C_RED}Failed to write config.${C_RESET}"
+        # Rollback is complex here, so we just warn.
+        # Ideally, previous write should be reverted, but config drift is minor.
+        STATUS_MSG="${C_RED}Updated variable but failed to update keybinds.${C_RESET}"
         return 1
     fi
 
-    # CRITICAL: Use cat > target to preserve symlinks/inodes
-    cat "$_TMPFILE" > "$CONFIG_FILE"
+    cat "$_TMPFILE" > "$BINDS_CONFIG"
     rm -f "$_TMPFILE"
     _TMPFILE=""
 
@@ -283,7 +307,7 @@ draw_ui() {
     # Keybind help
     buf+="${CLR_EOL}"$'\n'
     buf+="${C_CYAN} [↑/↓ j/k] Navigate  [Enter] Apply  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
-    buf+="${C_CYAN} File: ${C_WHITE}${CONFIG_FILE}${C_RESET}${CLR_EOL}${CLR_EOS}"
+    buf+="${C_CYAN} File: ${C_WHITE}Split Config${C_RESET}${CLR_EOL}${CLR_EOS}"
 
     printf '%s' "$buf"
 }
@@ -393,8 +417,10 @@ handle_input() {
 main() {
     # 1. Base Environment Checks (Headless-safe)
     if (( BASH_VERSINFO[0] < 5 )); then log_err "Bash 5.0+ required"; exit 1; fi
-    if [[ ! -f "$CONFIG_FILE" ]]; then log_err "Config not found: $CONFIG_FILE"; exit 1; fi
-    if [[ ! -w "$CONFIG_FILE" ]]; then log_err "Config not writable: $CONFIG_FILE"; exit 1; fi
+    if [[ ! -f "$APPS_CONFIG" ]]; then log_err "Apps Config not found: $APPS_CONFIG"; exit 1; fi
+    if [[ ! -w "$APPS_CONFIG" ]]; then log_err "Apps Config not writable: $APPS_CONFIG"; exit 1; fi
+    if [[ ! -f "$BINDS_CONFIG" ]]; then log_err "Keybinds Config not found: $BINDS_CONFIG"; exit 1; fi
+    if [[ ! -w "$BINDS_CONFIG" ]]; then log_err "Keybinds Config not writable: $BINDS_CONFIG"; exit 1; fi
 
     local _dep
     for _dep in awk xdg-mime; do
@@ -405,7 +431,7 @@ main() {
 
     # 2. Detect current state (Required for both CLI and TUI)
     if ! detect_current_fm; then
-        log_err "Could not detect \$fileManager in config file"
+        log_err "Could not detect \$fileManager in $APPS_CONFIG"
         exit 1
     fi
 
