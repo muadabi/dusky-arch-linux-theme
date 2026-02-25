@@ -60,10 +60,6 @@ export QT_QUICK_CONTROLS_STYLE=Fusion
 # Fixes blank screens/rendering issues in tiling WMs (Java AWT).
 export _JAVA_AWT_WM_NONREPARENTING=1
 
-# --- Electron Configuration ---
-# Modern Electron apps (VSCode, Discord, Obsidian) generally auto-negotiate.
-# If apps flicker, forcing "wayland" here in a hardware-specific block might be needed.
-export ELECTRON_OZONE_PLATFORM_HINT=auto
 
 # -----------------------------------------------------------------------------
 # 3. APPS & DEFAULT PREFERENCES
@@ -78,7 +74,6 @@ export VISUAL=nvim
 # -----------------------------------------------------------------------------
 # 4. APP SPECIFIC FLAGS
 # -----------------------------------------------------------------------------
-export MOZ_ENABLE_WAYLAND=1
 export SDL_VIDEODRIVER=wayland
 export CLUTTER_BACKEND=wayland
 
