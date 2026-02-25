@@ -177,7 +177,6 @@ declare -ra UPDATE_SEQUENCE=(
 
 #================= CUSTOM=====================
 
-    "U | waypaper_config_reset.sh"
     "U | copy_service_files.sh --default"
     "U | update_checker.sh --num"
     "S | package_installation.sh"
